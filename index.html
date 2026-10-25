@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
+<title>The Last Conflict — Remake</title>
+<style>
+  @font-face { font-family: Bebas; src: url(assets/img/BebasNeue-Regular.ttf); }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: Bebas, Impact, sans-serif; color: #e8e8e8; }
+  canvas#game { display: block; width: 100vw; height: 100vh; cursor: none; image-rendering: pixelated; }
+  #loading { position: fixed; inset: 0; display: grid; place-items: center; font-size: 28px; letter-spacing: 2px; }
+  #overlay.hidden { display: none; }
+  #overlay.menu { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,0.55); overflow: auto; padding: 24px 0; }
+  .panel { box-sizing: border-box; background: rgba(10,12,16,0.92); border: 1px solid #2c3038; padding: 22px 28px; max-width: 460px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.6); }
+  .panel.wide { max-width: 980px; width: calc(100vw - 80px); }
+  h1 { font-size: 56px; margin: 0; letter-spacing: 4px; color: #d8352a; text-shadow: 0 3px 0 #000; }
+  h2 { font-size: 34px; margin: 0 0 8px; letter-spacing: 2px; }
+  h3 { margin: 16px 0 6px; font-size: 20px; letter-spacing: 2px; color: #ffd36b; text-align: left; }
+  .sub { color: #9aa; margin: 4px 0 8px; font-family: system-ui, sans-serif; font-size: 13px; }
+  .help { color: #889; font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.6; margin-top: 14px; }
+  .choices { display: flex; flex-wrap: wrap; gap: 8px; }
+  button { font-family: inherit; cursor: pointer; }
+  .pick { background: #15181e; color: #ddd; border: 1px solid #333842; padding: 8px 14px; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 18px; letter-spacing: 1px; }
+  .pick small { font-family: system-ui, sans-serif; font-size: 11px; color: #889; letter-spacing: 0; }
+  .pick.on { border-color: #ffd36b; background: #2a2414; color: #ffd36b; }
+  .pick:hover { border-color: #777; }
+  .look-pick canvas { image-rendering: pixelated; }
+  .go { margin-top: 18px; background: #b3261e; color: #fff; border: none; padding: 12px 34px; font-size: 26px; letter-spacing: 3px; }
+  .go:hover { background: #d8352a; }
+  ul.perks { text-align: left; font-family: system-ui, sans-serif; font-size: 12px; color: #aab; margin: 6px 0; padding-left: 18px; columns: 2; }
+  ul.perks b { color: #ddd; }
+  .grid { display: flex; flex-wrap: wrap; gap: 8px; text-align: left; }
+  .cell { background: #15181e; border: 1px solid #333842; color: #ddd; padding: 8px; display: flex; flex-direction: column; align-items: center; min-width: 120px; font-size: 16px; gap: 2px; }
+  .cell small { font-family: system-ui, sans-serif; font-size: 11px; color: #889; }
+  .cell.tall { min-width: 260px; }
+  .cell.craft { border-color: #3c6b3c; }
+  canvas.icon { width: 48px; height: 48px; image-rendering: pixelated; }
+  .ups { display: flex; flex-direction: column; gap: 4px; width: 100%; margin-top: 6px; }
+  .up { background: #1f3a24; color: #cfe; border: 1px solid #2f5a37; padding: 4px 8px; font-family: system-ui, sans-serif; font-size: 12px; text-align: left; }
+  .up.off { background: #1a1c20; color: #777; border-color: #2a2c30; cursor: default; }
+  canvas#game { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  body.touch canvas#game { cursor: default; }
+  .row { display: flex; gap: 10px; justify-content: center; align-items: center; flex-wrap: wrap; }
+  .row .go { margin-top: 18px; }
+  .pick.small { align-self: center; margin-top: 18px; padding: 10px 16px; }
+  .pick.danger { border-color: #6b2a2a; color: #ffb0b0; margin-top: 10px; }
+  .choices.mode .pick { flex: 1 1 200px; }
+  .sub.left { text-align: left; line-height: 1.5; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 12px; }
+  .tab { background: #15181e; color: #aab; border: 1px solid #333842; padding: 8px 14px; font-size: 17px; letter-spacing: 1px; }
+  .tab.on { color: #ffd36b; border-color: #ffd36b; background: #2a2414; }
+  .opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; text-align: left; margin-bottom: 10px; }
+  .opt { display: flex; gap: 10px; align-items: center; background: #15181e; border: 1px solid #2a2e36; padding: 8px 10px; font-family: system-ui, sans-serif; font-size: 13px; cursor: pointer; }
+  .opt span { display: flex; flex-direction: column; flex: 1; }
+  .opt small { color: #889; }
+  .opt input[type=checkbox] { width: 20px; height: 20px; accent-color: #ffd36b; }
+  .opt input[type=range] { flex: 1; accent-color: #ffd36b; }
+  table.binds { width: 100%; border-collapse: collapse; font-family: system-ui, sans-serif; font-size: 13px; margin-bottom: 6px; }
+  table.binds th { text-align: left; color: #ffd36b; font-family: Bebas, Impact, sans-serif; font-size: 16px; letter-spacing: 1px; padding: 4px 6px; }
+  table.binds td { padding: 3px 6px; border-top: 1px solid #22252c; text-align: left; }
+  .bind { min-width: 110px; background: #1c2027; color: #eee; border: 1px solid #3a3f4a; padding: 5px 10px; font-family: system-ui, sans-serif; font-size: 13px; }
+  .bind:hover { border-color: #888; }
+  .bind.clash { border-color: #b3261e; color: #ffb0b0; }
+  .bind.wait { border-color: #ffd36b; color: #ffd36b; animation: blink 1s infinite; }
+  select { background: #1c2027; color: #eee; border: 1px solid #3a3f4a; padding: 6px; font-size: 13px; width: 100%; }
+  select.editing { border-color: #ffd36b; }
+  @keyframes blink { 50% { opacity: 0.5; } }
+  .navfocus, .navfocus:focus { outline: 3px solid #ffd36b !important; outline-offset: 2px; }
+  #toast { position: fixed; top: 16px; left: 50%; transform: translate(-50%, -80px); background: rgba(10,12,16,0.92); border: 1px solid #ffd36b; color: #ffd36b; padding: 8px 18px; font-size: 20px; letter-spacing: 1px; transition: transform .3s; z-index: 10; pointer-events: none; }
+  #toast.show { transform: translate(-50%, 0); }
+  @media (pointer: coarse), (max-width: 760px), (max-height: 520px) {
+    #overlay.menu { padding: 10px 0; align-items: start; }
+    .panel { padding: 14px 14px; }
+    .panel.wide { width: calc(100vw - 24px); }
+    h1 { font-size: 38px; }
+    h2 { font-size: 28px; }
+    h3 { margin: 10px 0 4px; }
+    .pick { padding: 10px 12px; min-height: 44px; }
+    .go { padding: 12px 26px; font-size: 24px; }
+    ul.perks { columns: 1; }
+    .bind, .tab, .up { min-height: 40px; }
+    .cell { min-width: 100px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="game" tabindex="0"></canvas>
+<div id="loading">Loading…</div>
+<div id="overlay" class="hidden"></div>
+<div id="toast"></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
