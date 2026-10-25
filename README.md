@@ -16,6 +16,16 @@ node tools/serve.js 8123
 
 Then open http://localhost:8123. You need Node 18 or newer. There's no build step and no dependencies.
 
+## Install as an app (PWA)
+
+The game is an installable Progressive Web App (`manifest.webmanifest` + `sw.js`):
+
+- **Android (Chrome):** open the hosted https link → menu **Install app** (or the **⬇ Install app** button on the title screen). It gets a home-screen icon and launches fullscreen in landscape.
+- **iPhone (Safari):** Share → **Add to Home Screen**.
+- **Offline:** the core game is cached on first load; maps and music are cached as you play them, or all at once via Settings → *Download everything for offline* (~30 MB).
+- Installing needs **https** (any static host) or `localhost`. A plain `http://192.168…` LAN address will run but won't install.
+- After changing any game files, bump `VERSION` in `sw.js` so installed copies pick up the update.
+
 ## Rebuild the assets from the original zip
 
 `assets/` is generated. To regenerate it, unzip `thelastconflict-win.zip` somewhere and run this (needs Node 24+ for `node:sqlite` and zstd):

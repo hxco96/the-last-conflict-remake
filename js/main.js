@@ -26,6 +26,29 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 window.addEventListener('pointerdown', unlockAudio);
+
+// ---------- installable app (PWA) ----------
+let installPrompt = null;
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data && e.data.type === 'cache-progress') {
+      showToast(e.data.done < e.data.total ? `Downloading for offline… ${e.data.done}/${e.data.total}` : 'Everything is available offline');
+    }
+  });
+}
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; if (screen && screen.name === 'menu') showMenu(); });
+window.addEventListener('appinstalled', () => { installPrompt = null; showToast('Installed — launch it from your home screen'); });
+const standalone = () => matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone;
+
+async function cacheEverything() {
+  const reg = await navigator.serviceWorker?.ready;
+  if (!reg || !reg.active) { showToast('Offline mode needs https (or localhost)'); return; }
+  const urls = [...assets.mapIndex.map((m) => 'assets/maps/' + m.file)];
+  try { const a = await (await fetch('assets/audio/index.json')).json(); for (const e of [...a.sfx, ...a.music]) urls.push('assets/audio/' + e.file); } catch { /* audio optional */ }
+  reg.active.postMessage({ type: 'cache-all', urls });
+  showToast(`Downloading ${urls.length} files for offline…`);
+}
 window.addEventListener('keydown', unlockAudio);
 // UI feedback sounds for every menu button
 overlay.addEventListener('click', (e) => { if (e.target.closest('button')) play.ui('menuClick'); });
@@ -132,7 +155,8 @@ function showMenu() {
       el('h3', {}, 'Shooting mode'), mode,
       el('div', { class: 'row' },
         el('button', { class: 'go', 'data-focus': true, onclick: startGame }, 'START SURVIVAL'),
-        el('button', { class: 'pick small', onclick: () => showSettings(showMenu) }, el('b', {}, '⚙ Settings'))),
+        el('button', { class: 'pick small', onclick: () => showSettings(showMenu) }, el('b', {}, '⚙ Settings')),
+        installPrompt && !standalone() ? el('button', { class: 'pick small', onclick: async () => { installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; showMenu(); } }, el('b', {}, '⬇ Install app')) : null),
       el('p', { class: 'help' }, controlsHelp())));
   music('Save Room(RE0)');
 }
@@ -288,6 +312,9 @@ function showSettings(back) {
         el('button', { class: 'pick' + (settings.legacy ? ' on' : ''), onclick: () => { settings.legacy = true; saveSettings(settings); showSettings(back); } }, el('b', {}, 'Legacy auto-aim'), el('small', {}, `PC: hold ${keyLabel(settings.keys.autofire[0])} · pad: ${input.padButtonLabel(settings.pad.fire[0])} · touch: FIRE`))),
       el('p', { class: 'sub left' }, 'Legacy mode locks onto the closest visible zed in your weapon\'s range and keeps firing while the button is held. Each shot rolls a weighted hit chance: weapon class accuracy, distance versus weapon range, whether you are standing / walking / running, target size and whether it is rushing, a Frenzy bonus, and a pity bonus that grows after every miss. Misses fly just past the target.'),
       toggle('Show hit chance on the lock-on reticle', 'showHitChance'),
+      el('h3', {}, 'Offline'),
+      el('p', { class: 'sub left' }, 'The game core works offline once loaded. Maps and music are saved as you play them — or grab everything now (~30 MB).'),
+      el('button', { class: 'pick small', onclick: cacheEverything }, el('b', {}, '⬇ Download everything for offline')),
       el('h3', {}, 'Audio'),
       el('div', { class: 'opts' },
         volume('Master volume', 'volMaster', 'master', 0.9),
