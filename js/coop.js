@@ -154,7 +154,7 @@ export class Coop {
       x: Math.round(pl.x), y: Math.round(pl.y), d: pl.dir, a: Math.round(pl.aim * 100) / 100,
       mv: pl.moving ? 1 : 0, rn: pl.running ? 1 : 0, al: pl.alive ? 1 : 0, dn: pl.down ? 1 : 0, dt: pl.down ? Math.ceil(pl.downT) : 0,
       hp: Math.max(0, Math.round(pl.hp)), mh: pl.maxHp, w: s && !s.isThrowable ? s.item.name : null, j: Math.round(pl.jumpH),
-      k: inMatch ? g.kills : 0,
+      k: inMatch ? g.kills : 0, cb: S.profile ? S.profile.coins : 0, // bank balance shown to teammates
     };
   }
 
@@ -428,16 +428,18 @@ export class Coop {
     if (!rows.length && !this.code) return;
     ctx.font = `${Math.round(11 * u)}px Bebas, sans-serif`;
     ctx.textAlign = 'right';
-    let y = Math.round((g.input && g.input.touchUI && g.input.lastDevice === 'touch' ? 132 : 70) * u);
+    // under the minimap (see Game.drawMinimap)
+    const mb = g.miniBox;
+    let y = Math.round(mb && mb.x > W / 2 ? mb.y + mb.h + 16 * u : (g.input && g.input.touchUI && g.input.lastDevice === 'touch' ? 132 : 70) * u);
     ctx.fillStyle = 'rgba(8,10,14,0.6)';
-    ctx.fillRect(W - 170 * u, y - 13 * u, 162 * u, (rows.length + 1) * 14 * u + 6 * u);
+    ctx.fillRect(W - 200 * u, y - 13 * u, 192 * u, (rows.length + 1) * 14 * u + 6 * u);
     ctx.fillStyle = '#ffd36b';
-    ctx.fillText(`CO-OP ${this.code} · ${rows.length + 1}/4`, W - 14 * u, y);
+    ctx.fillText(`CO-OP ${this.code} · ${rows.length + 1}/4 · YOU ${this.session.profile.coins}c`, W - 14 * u, y);
     for (const p of rows) {
       y += 14 * u;
       const where = p.v === 'match' ? (p.r === this.session.round ? (p.dn ? `DOWN ${p.dt}s` : p.al ? `${p.hp} HP · ${p.k || 0} kills` : 'dead') : 'match') : p.v === 'spec' ? 'spectating' : 'in base';
       ctx.fillStyle = p.dn ? '#ff6b6b' : p.v === 'match' && p.al ? '#7dff8a' : '#9cd4ff';
-      ctx.fillText(`${p.n} · ${where}`, W - 14 * u, y);
+      ctx.fillText(`${p.n} · ${p.cb ?? 0}c · ${where}`, W - 14 * u, y);
     }
     ctx.textAlign = 'left';
   }

@@ -1,12 +1,14 @@
-// Pregame lobby: the "Base" map, cleaned up, with every weapon and item on display tables.
-// Walk up to a table to buy/equip, talk to the merchant for permanent upgrades, use the mission
+// Pregame lobby: the "Base" map, cleaned up. Every weapon and item is sold at the ARMORY: one compact
+// row of tables next to the spawn (two categories per table); walk up to any table to open the
+// armory screen on that category (tabs switch between all categories without walking). Walk up to a
+// table to buy/equip, talk to the merchant for permanent upgrades, use the mission
 // board to host-pick or vote the next round, and walk out through the DEPLOY doors to join a
 // match that is already running.
 import { T } from './map.js';
 import { Player } from './actors.js';
 import { randomLook } from './npc.js';
 import { weaponPrice, stackPrice } from './profile.js';
-import { tierOf, statLine, TIER_COLORS, TIER_NAMES } from './tiers.js';
+import { tierOf, TIER_COLORS, TIER_NAMES } from './tiers.js';
 import { play } from './sfx.js';
 
 const CATS = [
@@ -23,6 +25,7 @@ const CATS = [
   ['Ammo', (i) => i.kind === 'ammo'],
   ['Medical', (i) => i.kind === 'consumable' && !i['up-inv-cap']],
 ];
+const SHORT = { 'Assault rifles': 'ARs', 'Throwables & mines': 'Throwables' };
 const TABLE_TOP = 6, TABLE_FACE = 50; // indoor_furniture_tables long table tiles
 
 export class LobbyExt {
@@ -58,33 +61,6 @@ export class LobbyExt {
     return [...new Map(out.map((c) => [key(c), c])).values()].sort((a, b) => key(a) - key(b));
   }
 
-  // Extra display tables in open floor: rows of up to 6 tables, aisle rows in between.
-  addTables(needCells) {
-    const g = this.g, map = g.map, ts = this.tableSet();
-    if (!ts) return [];
-    const ctx = map.bot.getContext('2d');
-    const top = map.resolve(ts.first + TABLE_TOP), face = map.resolve(ts.first + TABLE_FACE);
-    const keepClear = [this.spawn, this.merchantPos, this.boardPos, ...this.deployDoors.map((d) => ({ x: d.x + 16, y: d.y + 16 }))].filter(Boolean);
-    const free = (cx, cy) => map.inBounds(cx, cy) && !map.blocking(cx, cy) && !map.dyn[map.idx(cx, cy)]
-      && keepClear.every((k) => Math.hypot(cx * T + 16 - k.x, cy * T + 16 - k.y) > 72);
-    const cells = [];
-    for (let cy = 2; cy < map.h - 3 && cells.length < needCells; cy++) {
-      let run = 0;
-      for (let cx = 1; cx < map.w - 1 && cells.length < needCells; cx++) {
-        const ok = free(cx, cy) && free(cx, cy - 1) && free(cx, cy + 1) && free(cx, cy + 2) && run < 6;
-        if (ok) {
-          run++;
-          cells.push([cx, cy]);
-          map.drawTile(ctx, top, cx * T, cy * T);
-          map.drawTile(ctx, face, cx * T, (cy + 1) * T);
-          map.solid[map.idx(cx, cy)] = 1;
-        } else if (run) { run = 0; cx += 1; } // aisle between segments
-      }
-      if (cells.length && cells[cells.length - 1][1] === cy) cy += 2; // aisle rows below a table row
-    }
-    return cells;
-  }
-
   placeFixtures() {
     const g = this.g, map = g.map;
     const near = (dx, dy) => {
@@ -116,26 +92,67 @@ export class LobbyExt {
     const kinds = new Set([...D.items.values()].filter((i) => i.kind === 'gun').map((i) => i['ammo-kind']));
     for (const k of kinds) { const it = D.item(D.names.get(k) || ''); if (it) items.push(it); }
     const groups = CATS.map(([label, f]) => [label, items.filter((i) => f(i) && D.icon(i.name))]).filter(([, l]) => l.length);
-    const needSpots = groups.reduce((n, [, l]) => n + l.length, 0);
-    // two items per table cell; every group starts on a fresh cell
-    let cells = this.existingTableCells();
-    const needCells = groups.reduce((n, [, l]) => n + Math.ceil(l.length / 2), 0);
-    if (cells.length < needCells) cells = cells.concat(this.addTables(needCells - cells.length + 4));
-    let ci = 0;
-    for (const [label, list] of groups) {
-      if (ci >= cells.length) break;
-      this.labels.push({ text: label, x: cells[ci][0] * T + 16, y: cells[ci][1] * T - 4 });
-      for (let k = 0; k < list.length; k += 2) {
-        if (ci >= cells.length) break;
-        const [cx, cy] = cells[ci++];
-        list.slice(k, k + 2).forEach((it, j) => {
-          const weapon = it.kind === 'gun' || it.kind === 'melee';
-          this.displays.push({ it, x: cx * T + 8 + j * 16, y: cy * T + 12, weapon, price: weapon ? weaponPrice(it) : stackPrice(it) });
-        });
-      }
-    }
+    // catalogue: weapons sorted by tier then price inside each category
+    this.catalog = groups.map(([label, list]) => ({
+      label,
+      items: list.map((it) => { const weapon = it.kind === 'gun' || it.kind === 'melee'; return { it, weapon, cat: label, price: weapon ? weaponPrice(it) : stackPrice(it) }; })
+        .sort((a, b) => (a.weapon && b.weapon ? tierOf(a.it) - tierOf(b.it) : 0) || a.price - b.price),
+    }));
+    this.displays = this.catalog.flatMap((c) => c.items);
+    // one short row of armory tables right next to the spawn, two categories per table
+    const per = Math.ceil(this.catalog.length / 6);
+    const groupsOf = [];
+    for (let i = 0; i < this.catalog.length; i += per) groupsOf.push(this.catalog.slice(i, i + per));
+    const cells = this.armoryCells(groupsOf.length);
+    this.stations = groupsOf.map((cats, i) => {
+      const cell = cells[i];
+      if (!cell) return null;
+      const pick = (c) => c.items.filter((d) => d.weapon).slice(-1).concat(c.items).slice(0, 1)[0]; // best weapon of each
+      return { x: cell[0] * T + 16, y: cell[1] * T + 12, cats, label: cats[0].label, names: cats.map((c) => SHORT[c.label] || c.label), show: cats.map(pick).filter(Boolean) };
+    }).filter(Boolean);
     this.stockedCount = this.displays.length;
-    this.wanted = needSpots;
+    this.wanted = this.displays.length;
+  }
+
+  // Rows of up to 6 tables with one aisle row between them, in the closest free block to the spawn.
+  armoryCells(n) {
+    const g = this.g, map = g.map, ts = this.tableSet();
+    const rowLen = Math.min(6, n), rows = Math.ceil(n / rowLen), H = rows * 3; // table, face, aisle per row
+    const keepClear = [this.merchantPos, this.boardPos, this.storagePos, ...this.deployDoors.map((d) => ({ x: d.x + 16, y: d.y + 16 }))].filter(Boolean);
+    const free = (cx, cy) => map.inBounds(cx, cy) && !map.blocking(cx, cy) && !map.dyn[map.idx(cx, cy)]
+      && keepClear.every((k) => Math.hypot(cx * T + 16 - k.x, cy * T + 16 - k.y) > 40);
+    const blockFree = (x0, y0) => {
+      for (let y = y0; y < y0 + H; y++) for (let x = x0; x < x0 + rowLen; x++) if (!free(x, y)) return false;
+      return true;
+    };
+    const sx = Math.floor(this.spawn.x / T), sy = Math.floor(this.spawn.y / T);
+    let best = null, bd = Infinity;
+    for (let y0 = 2; y0 < map.h - H - 1; y0++) for (let x0 = 2; x0 < map.w - rowLen - 2; x0++) {
+      const d = Math.hypot(x0 + rowLen / 2 - sx, y0 + H / 2 - sy);
+      if (d < bd && d > 2 && blockFree(x0, y0)) { bd = d; best = [x0, y0]; }
+    }
+    // the base's own tables, if there are enough of them close to the spawn (reachable from below)
+    const own = this.existingTableCells().filter(([x, y]) => free(x, y + 1) || free(x, y + 2))
+      .sort((a, b) => Math.hypot(a[0] - sx, a[1] - sy) - Math.hypot(b[0] - sx, b[1] - sy)).slice(0, n)
+      .sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+    if ((!best || !ts || bd > 10) && own.length === n && own.every(([x, y]) => Math.hypot(x - sx, y - sy) < 14)) {
+      const xs = own.map((c) => c[0]), ys = own.map((c) => c[1]);
+      this.armoryArea = { x: Math.min(...xs) * T, y: Math.min(...ys) * T, w: (Math.max(...xs) - Math.min(...xs) + 1) * T, h: (Math.max(...ys) - Math.min(...ys) + 2) * T };
+      return own;
+    }
+    if (!best || !ts) return this.existingTableCells().slice(0, n); // last resort
+    const ctx = map.bot.getContext('2d');
+    const top = map.resolve(ts.first + TABLE_TOP), face = map.resolve(ts.first + TABLE_FACE);
+    const cells = [];
+    for (let i = 0; i < n; i++) {
+      const cx = best[0] + (i % rowLen), cy = best[1] + Math.floor(i / rowLen) * 3;
+      map.drawTile(ctx, top, cx * T, cy * T);
+      map.drawTile(ctx, face, cx * T, (cy + 1) * T);
+      map.solid[map.idx(cx, cy)] = 1;
+      cells.push([cx, cy]);
+    }
+    this.armoryArea = { x: best[0] * T, y: best[1] * T, w: rowLen * T, h: H * T };
+    return cells;
   }
 
   // ---------- interaction ----------
@@ -163,13 +180,13 @@ export class LobbyExt {
         return { type: 'ext', label: live ? 'DEPLOY into the running match' : 'Deploy door (no match running)', run: () => live && this.g.onDeploy && this.g.onDeploy() };
       }
     }
-    let best = null, bd = 26;
-    for (const d of this.displays) {
-      const dist = Math.hypot(d.x - pl.x, d.y - (pl.y - 14));
-      if (dist < bd) { bd = dist; best = d; }
+    let best = null, bd = 30;
+    for (const c of this.stations || []) {
+      const dist = Math.hypot(c.x - pl.x, c.y - (pl.y - 14));
+      if (dist < bd) { bd = dist; best = c; }
     }
-    this.tip = best && best.weapon ? { name: best.it.name, tier: tierOf(best.it), line: statLine(best.it), owned: this.owned(best.it) } : null;
-    if (best) return { type: 'ext', label: this.describe(best), run: () => this.take(best) };
+    this.tip = null;
+    if (best) return { type: 'ext', label: `ARMORY · ${best.names.join(' & ')} — browse & buy`, run: () => this.g.onArmory && this.g.onArmory(best.label) };
     return null;
   }
 
@@ -238,18 +255,22 @@ export class LobbyExt {
 
   drawGround(ctx) {
     const g = this.g, pl = g.player;
-    for (const d of this.displays) {
-      g.data.drawIcon(ctx, d.it.name, d.x - 8, d.y - 8, 16);
-      if (Math.hypot(d.x - pl.x, d.y - pl.y) < 90) {
-        const owned = d.weapon && this.owned(d.it);
-        ctx.font = '5px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillStyle = owned ? '#7dff8a' : d.weapon ? TIER_COLORS[tierOf(d.it)] : '#ffd36b';
-        ctx.fillText(owned ? '✓' : (d.weapon ? 'T' + tierOf(d.it) + ' ' : '') + d.price + 'c', d.x, d.y + 12);
-        ctx.textAlign = 'left';
-      }
+    if (this.armoryArea) {
+      const a = this.armoryArea;
+      ctx.font = '8px Bebas, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(a.x + a.w / 2 - 22, a.y - 24, 44, 10); ctx.fillStyle = '#ffd36b'; ctx.fillText('ARMORY', a.x + a.w / 2, a.y - 16); ctx.textAlign = 'left';
     }
-    ctx.font = '7px Bebas, sans-serif';
-    for (const l of this.labels) { ctx.fillStyle = 'rgba(0,0,0,0.55)'; const w = ctx.measureText(l.text).width + 6; ctx.fillRect(l.x - 3, l.y - 8, w, 9); ctx.fillStyle = '#9cd4ff'; ctx.fillText(l.text, l.x, l.y); }
+    for (const c of this.stations || []) {
+      (c.show || []).forEach((d, j) => g.data.drawIcon(ctx, d.it.name, c.x - 14 + j * 12, c.y - 10, 14));
+      const near = Math.hypot(c.x - pl.x, c.y - pl.y) < 40;
+      ctx.font = '5px sans-serif'; ctx.textAlign = 'center';
+      c.names.forEach((name, j) => {
+        const y = c.y + 12 + j * 7, w = ctx.measureText(name).width + 4;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(c.x - w / 2, y, w, 7);
+        ctx.fillStyle = near ? '#ffd36b' : '#9cd4ff'; ctx.fillText(name, c.x, y + 5.5);
+      });
+      ctx.textAlign = 'left';
+    }
     const live = g.session && g.session.matchRunning();
     for (const d of this.deployDoors) {
       ctx.strokeStyle = live ? `rgba(125,255,138,${0.5 + 0.4 * Math.sin(g.time * 4)})` : 'rgba(150,150,150,0.4)';
@@ -283,9 +304,18 @@ export class LobbyExt {
     if (!obj) return;
     ctx.font = `${15 * u}px Bebas, Impact, sans-serif`;
     ctx.textAlign = 'center';
-    const w = ctx.measureText(obj).width + 24 * u, y = 24 + 50 * u;
-    ctx.fillStyle = 'rgba(8,10,14,0.8)'; ctx.fillRect(W / 2 - w / 2, y, w, 24 * u);
-    ctx.fillStyle = '#9cd4ff'; ctx.fillText(obj, W / 2, y + 17 * u);
+    const mb = this.g.miniBox;
+    let w = ctx.measureText(obj).width + 24 * u;
+    // keep clear of a top-centre minimap (touch landscape)
+    let y = mb && mb.x < W / 2 && mb.x + mb.w > W / 2 ? mb.y + mb.h + 6 : 24 + 50 * u, cx = W / 2;
+    // and of a top-right minimap: slide left, or drop below it if there is no room
+    if (mb && mb.x > W / 2 && cx + w / 2 > mb.x - 8 && y + 24 * u > mb.y) {
+      const room = mb.x - 16;
+      if (w > room) { ctx.font = `${Math.max(10, 15 * u * (room - 24 * u) / (w - 24 * u))}px Bebas, Impact, sans-serif`; w = Math.min(room, ctx.measureText(obj).width + 24 * u); }
+      cx = Math.max(w / 2 + 8, mb.x - 8 - w / 2);
+    }
+    ctx.fillStyle = 'rgba(8,10,14,0.8)'; ctx.fillRect(cx - w / 2, y, w, 24 * u);
+    ctx.fillStyle = '#9cd4ff'; ctx.fillText(obj, cx, y + 17 * u);
     ctx.textAlign = 'left';
   }
   placeMineItem() { return false; }

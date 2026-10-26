@@ -10,7 +10,7 @@
 // clients mirror the host's state. Solo play is the same flow with one voter.
 import { Game } from './game.js';
 import { MODES, THEMES } from './modes.js';
-import { DIFFICULTY, payout } from './profile.js';
+import { DIFFICULTY, ZOMBIE_COUNT, payout } from './profile.js';
 import { music } from './sfx.js';
 import { CAUSES } from './survival.js';
 
@@ -18,7 +18,6 @@ export const FIRST_INTERMISSION = 60;
 export const INTERMISSION = 45;
 const ABANDON_AFTER = 150; // a started match with nobody deployed ends after this long
 
-const pickN = (arr, n) => [...arr].sort(() => Math.random() - 0.5).slice(0, n);
 
 export class Session {
   constructor({ canvas, assets, data, input, profile, cls, look, ui, coop = null }) {
@@ -29,7 +28,7 @@ export class Session {
     this.state = 'intermission';
     this.timer = FIRST_INTERMISSION;
     const mi = assets.mapIndex.findIndex((m) => m.name !== 'Base');
-    this.next = { map: Math.max(0, mi), mode: 'Survival', theme: 'Zeds', difficulty: 'Normal' };
+    this.next = { map: Math.max(0, mi), mode: 'Survival', theme: 'Zeds', difficulty: 'Normal', density: 'Normal' };
     this.hostMode = true;          // host picks; false = vote
     this.ballot = this.makeBallot();
     this.myVote = {};
@@ -53,8 +52,9 @@ export class Session {
     this.lobby.onMerchant = () => this.ui.merchant();
     this.lobby.onBoard = () => this.ui.board();
     this.lobby.onStorage = () => this.ui.storage();
+    this.lobby.onArmory = (c) => this.ui.armory(c);
     this.lobby.onDeploy = () => this.deploy();
-    this.lobby.msg('Welcome to the base. Gear up at the tables, upgrade with the merchant, vote at the mission board.', '#9cd4ff');
+    this.lobby.msg('Welcome to the base. Gear up at the ARMORY tables, upgrade with the merchant, vote at the mission board.', '#9cd4ff');
     music('Sake');
     if (this.coop) {
       this.coop.session = this;
@@ -67,14 +67,10 @@ export class Session {
   matchRunning() { return this.state === 'running' && !!this.match; }
 
   // ---------- host / vote ----------
+  // Voting offers exactly the same choices as a host pick.
   makeBallot() {
     const maps = this.assets.mapIndex.map((m, i) => i).filter((i) => this.assets.mapIndex[i].name !== 'Base');
-    return {
-      map: pickN(maps, 3),
-      mode: pickN(Object.keys(MODES).filter((m) => m !== 'Peaceful'), 3),
-      theme: pickN(Object.keys(THEMES), 3),
-      difficulty: Object.keys(DIFFICULTY),
-    };
+    return { map: maps, mode: Object.keys(MODES), theme: Object.keys(THEMES), difficulty: Object.keys(DIFFICULTY), density: Object.keys(ZOMBIE_COUNT) };
   }
   vote(cat, value) {
     this.myVote[cat] = value;
@@ -241,10 +237,10 @@ export class Session {
     this.lobby.ext.syncInv();
     const L = this.lobby.loadoutSnapshot();
     const n = this.next;
-    this.lobby.msg(`Round ${this.round}: ${this.assets.mapIndex[n.map].name} · ${n.mode} · ${n.theme} · ${n.difficulty}`, '#ffd36b');
+    this.lobby.msg(`Round ${this.round}: ${this.assets.mapIndex[n.map].name} · ${n.mode} · ${n.theme} · ${n.difficulty} · ${n.density || 'Normal'} zeds`, '#ffd36b');
     const m = new Game(this.canvas, this.assets, this.data, {
       map: this.assets.mapIndex[n.map], cls: this.cls, look: this.look, input: this.input, mode: n.mode, theme: n.theme,
-      difficulty: n.difficulty, profile: this.profile, loadout: L, spectate: true, coop: this.coop,
+      difficulty: n.difficulty, density: n.density || 'Normal', profile: this.profile, loadout: L, spectate: true, coop: this.coop,
     });
     m.netNext = { ...n };
     m.onEnd = () => {}; m.onWin = () => {};

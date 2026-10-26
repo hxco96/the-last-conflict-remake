@@ -11,6 +11,7 @@ import { Extras, THEMES } from './modes.js';
 import { LobbyExt } from './lobby.js';
 import { spawnNPC, updateNPC, hurtNPC, reviveNPC, rescueSurvivor } from './npc.js';
 import { Director } from './survival.js';
+import { ZOMBIE_COUNT } from './profile.js';
 
 // Group unlock delays from spawn_levels_*.rktd are in seconds; scaled so a solo run sees them sooner.
 const TIME_SCALE = 1 / 3;
@@ -264,7 +265,7 @@ export class Game {
     }
     // a few infected already roaming, away from the player
     const zeds = this.groups[0];
-    for (let i = 0; i < 5 && zeds && this.opts.mode !== 'Peaceful'; i++) {
+    for (let i = 0; i < Math.round(5 * this.density) && zeds && this.opts.mode !== 'Peaceful'; i++) {
       const p = this.spawnPoint();
       if (p) this.spawnMob(this.pickId(zeds.ids), p.x, p.y);
     }
@@ -300,6 +301,8 @@ export class Game {
   }
 
   // ---------- helpers ----------
+  // "Zombie count" picked on the mission board (Few … Apocalypse)
+  get density() { return (ZOMBIE_COUNT[this.opts.density] || ZOMBIE_COUNT.Normal).mul; }
   get isClient() { return !!(this.coop && this.coop.client && !this.opts.lobby); }
   get isHost() { return !!(this.coop && this.coop.host && !this.opts.lobby); }
   hasPerk(p) { return this.perks.has(p) && (!FRENZY_PERKS.has(p) || this.frenzyT > 0); }
@@ -488,8 +491,8 @@ export class Game {
     // bigger hordes for bigger squads (Left 4 Dead style: +60% per extra survivor)
     const squad = 1 + (this.coop ? this.coop.targets(this).length : 0);
     let [cap, interval] = this.dir.spawnTuning(Math.min(8 + this.time / 8, 50) * (this.diff ? this.diff.spawn : 1), Math.max(0.5, 2.2 - this.time / 200));
-    cap *= 1 + 0.6 * (squad - 1);
-    this.spawnT = interval;
+    cap *= (1 + 0.6 * (squad - 1)) * this.density;
+    this.spawnT = this.density > 1 ? interval / Math.sqrt(this.density) : interval;
     if (alive >= cap) return;
     const open = this.groups.filter((g) => this.time >= g.unlock);
     if (!open.length) return;
@@ -1141,7 +1144,7 @@ export class Game {
     const quiet = !this.mobs.some((m) => m.alive && Math.hypot(m.x - pl.x, m.y - pl.y) < 300);
     this.quietT = quiet ? (this.quietT || 0) + dt : 0;
     if (s && s.isGun && !this.reload && this.quietT > 2 && s.mag < s.stat('max-mag') * 0.5 && this.ammo.get(s.ammoKind) > 0) this.startReload();
-    this.aliveTime = (this.aliveTime || 0) + dt;
+    if (!this.opts.lobby) this.aliveTime = (this.aliveTime || 0) + dt; // pay only accrues on a real map
     if (s && !this.reload && !this.opts.lobby) {
       const rate = s.stat('fire-rate') * this.perkMods(s).rate;
       const auto = s.isMelee || (s.isGun && s.item['fire-rate'] <= 150);
@@ -1435,6 +1438,7 @@ export class Game {
     if (this.ext) this.ext.drawScreen(ctx, cv.width, cv.height, Math.max(1, Math.round(cv.height / 400)));
     this.drawHud(ctx, cv.width, cv.height);
     if (this.dir) this.dir.drawScreen(ctx, cv.width, cv.height);
+    this.drawMinimap(ctx, cv.width, cv.height);
     if (this.coop) this.coop.drawScreen(this, ctx, cv.width, cv.height);
   }
 
@@ -1619,6 +1623,76 @@ export class Game {
     }
   }
 
+  // Bank balance (what you can spend) and, on a map, what this run will pay out.
+  moneyText() {
+    const bank = this.profile ? this.profile.coins : 0;
+    return this.opts.lobby || this.ghost ? `${bank}c` : `${bank}c  +${this.earnings.total}`;
+  }
+
+  // Minimap: the whole floor, you (white arrow), teammates (blue, red when down), nearby zeds (red).
+  drawMinimap(ctx, W, H) {
+    const inp = this.input, map = this.map;
+    if (!map || (inp && inp.settings.minimap === false)) return;
+    const touch = !!(inp && inp.touchUI && inp.lastDevice === 'touch'), portrait = touch && H > W;
+    const u = touch ? Math.max(0.75, Math.min(W, H) / 430) : Math.max(1, Math.round(H / 400));
+    const M = Math.round(10 * u);
+    // box hugs the map's shape inside the max size, so no space is wasted
+    const maxW = (touch ? 130 : 170) * u, maxH = (touch ? 96 : 104) * u;
+    const k = Math.min((maxW - 6 * u) / map.pw, (maxH - 6 * u) / map.ph);
+    const bw = Math.max(60 * u, map.pw * k + 6 * u), bh = map.ph * k + 6 * u;
+    let bx, by;
+    if (portrait) { bx = W - M - bw; by = M + 52 * u; }
+    else if (touch) { bx = W / 2 - bw / 2; by = M; }
+    else { bx = W - M - bw; by = M + 56 * u; }
+    this.miniBox = { x: bx, y: by, w: bw, h: bh };
+    if (!map._mini) {
+      // small cached copy of the floor (drawn once per floor)
+      const s = Math.min(1, 320 / Math.max(map.pw, map.ph)), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(map.pw * s)); c.height = Math.max(1, Math.round(map.ph * s));
+      const x = c.getContext('2d');
+      x.imageSmoothingEnabled = true;
+      x.drawImage(map.bot, 0, 0, c.width, c.height);
+      x.drawImage(map.top, 0, 0, c.width, c.height);
+      map._mini = c;
+    }
+    const dw = map.pw * k, dh = map.ph * k, ox = bx + (bw - dw) / 2, oy = by + (bh - dh) / 2;
+    const X = (x) => ox + x * k, Y = (y) => oy + y * k;
+    ctx.fillStyle = 'rgba(8,10,14,0.78)'; ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1; ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+    ctx.globalAlpha = 0.75; ctx.drawImage(map._mini, ox, oy, dw, dh); ctx.globalAlpha = 1;
+    ctx.save(); ctx.beginPath(); ctx.rect(bx, by, bw, bh); ctx.clip();
+    if (this.cam) { ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.strokeRect(X(this.cam.x), Y(this.cam.y), this.cam.vw * k, this.cam.vh * k); }
+    const pl = this.player, me = this.ghost ? this.spec : pl, dot = (x, y, r, c) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(X(x), Y(y), r, 0, 7); ctx.fill(); };
+    for (const m of this.mobs) if (m.alive && Math.hypot(m.x - me.x, m.y - me.y) < 520) dot(m.x, m.y, (m.boss ? 2.6 : 1.3) * u, m.elite ? '#ff9a3a' : '#ff3b3b');
+    for (const n of [...(this.npcs || []), ...(this.npcMirror || [])]) if (n.alive && !n.dead) dot(n.x, n.y, 1.5 * u, '#9cff9c');
+    if (this.ext && this.ext.heli) { const h = this.ext.heli; dot(h.tx ?? h.x, h.ty ?? h.y, 3 * u, '#ffd36b'); }
+    if (this.ext && this.ext.deployDoors) for (const d of this.ext.deployDoors) dot(d.x + 16, d.y + 16, 2 * u, '#7dff8a');
+    // teammates: big blue dots with their initial, red when down
+    if (this.avatars) {
+      ctx.font = `${Math.round(8 * u)}px Bebas, sans-serif`; ctx.textAlign = 'center';
+      for (const a of this.avatars.values()) {
+        if (!a.visible || !a.alive) continue;
+        const c = a.down ? (Math.floor(this.time * 4) % 2 ? '#ff3b3b' : '#ffffff') : '#4fc3ff';
+        ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(X(a.x), Y(a.y), 3.2 * u, 0, 7); ctx.stroke();
+        dot(a.x, a.y, 3.2 * u, c);
+        ctx.fillStyle = '#fff'; ctx.fillText((a.name || '?')[0].toUpperCase(), X(a.x), Y(a.y) - 4.5 * u);
+      }
+      ctx.textAlign = 'left';
+    }
+    // you: an arrow pointing where you aim
+    if (!this.ghost && pl.alive) {
+      const a = pl.aim || 0, x = X(pl.x), y = Y(pl.y), r = 4.2 * u;
+      ctx.fillStyle = pl.down ? '#ff3b3b' : '#ffffff'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+      ctx.lineTo(x + Math.cos(a + 2.5) * r * 0.8, y + Math.sin(a + 2.5) * r * 0.8);
+      ctx.lineTo(x + Math.cos(a - 2.5) * r * 0.8, y + Math.sin(a - 2.5) * r * 0.8);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+    if (this.floorCount > 1) { ctx.font = `${Math.round(10 * u)}px Bebas, sans-serif`; ctx.fillStyle = '#9cd4ff'; ctx.fillText(`FLOOR ${this.z + 1}/${this.floorCount}`, bx + 4 * u, by + bh - 4 * u); }
+  }
+
   drawHud(ctx, W, H) {
     const pl = this.player, A = this.atlas.combat, inp = this.input;
     const touch = !!(inp && inp.touchUI && inp.lastDevice === 'touch');
@@ -1713,7 +1787,7 @@ export class Game {
     let msgY;
     if (touch) {
       panel(vx, vy + vh + 4 * u, vw, 20 * u);
-      text(`${clock}   KILLS ${this.kills}   +${this.earnings.total}c   ZEDS ${alive}${this.floorCount > 1 ? `   FLOOR ${this.z + 1}/${this.floorCount}` : ''}`, vx + 6 * u, vy + vh + 19 * u, 13 * u, '#ddd');
+      text(`${clock}   KILLS ${this.kills}   ${this.moneyText()}   ZEDS ${alive}${this.floorCount > 1 ? `   FLOOR ${this.z + 1}/${this.floorCount}` : ''}`, vx + 6 * u, vy + vh + 19 * u, 13 * u, '#ddd');
       msgY = portrait ? sy0 + sh + 70 * u : vy + vh + 42 * u;
     } else {
       panel(M, M, 200 * u, 50 * u);
@@ -1721,7 +1795,7 @@ export class Game {
       text(`KILLS ${this.kills}`, M + 8 + 70 * u, M + 22 * u, 15 * u, '#ff9b6b');
       const coin = A.find('coin', ['default'], ['x']);
       if (coin) A.drawCentered(ctx, coin.list[0].f, M + 16, M + 37 * u, 0.5 * u);
-      text(this.opts.lobby ? `${this.profile ? this.profile.coins : 0}` : `+${this.earnings.total}`, M + 8 + 18 * u, M + 42 * u, 15 * u, '#ffd36b');
+      text(this.moneyText(), M + 8 + 18 * u, M + 42 * u, 15 * u, '#ffd36b');
       text(`INFECTED NEARBY ${alive}${this.floorCount > 1 ? `  ·  FLOOR ${this.z + 1}/${this.floorCount}` : ''}`, M + 8 + 70 * u, M + 42 * u, 12 * u, '#aaa');
       // class panel
       const pw = 220 * u, px = W - M - pw;
