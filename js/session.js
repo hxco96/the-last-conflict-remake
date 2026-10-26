@@ -305,18 +305,21 @@ export class Session {
     else if (result === 'abandoned') lb.msg('The round ended — nobody deployed.', '#ffb0b0');
   }
 
-  lobbyBanner() {
-    const t = Math.max(0, Math.ceil(this.timer));
-    const clock = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+  // What the base's next-round card shows (see LobbyExt.drawCard).
+  lobbyInfo() {
+    const clock = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+    const rules = (o) => [o.mode, o.difficulty, o.mode === 'Peaceful' ? null : `${o.density || 'Normal'} zeds`].filter(Boolean).join(' · ');
+    const room = this.coop ? `ROOM ${this.coop.code} ${this.coop.count}/4 · ` : '';
+    if (this.state === 'running' && this.match) {
+      const o = this.match.opts;
+      return { label: `ROUND ${this.round} LIVE`, clock: clock(this.match.time || 0), map: o.map.name, line: room + rules(o), status: 'IN PROGRESS — walk out a green DEPLOY door', color: '#7dff8a' };
+    }
     const n = this.next, name = this.assets.mapIndex[n.map].name;
-    const room = this.coop ? `ROOM ${this.coop.code} (${this.coop.count}/4) · ` : '';
-    return room + this.bannerText(clock, n, name);
-  }
-
-  bannerText(clock, n, name) {
-    if (this.state === 'running' && this.match) return `ROUND ${this.round} IN PROGRESS · ${this.match.opts.map.name} — walk out a DEPLOY door to join`;
-    if (this.state === 'starting') return 'STARTING ROUND…';
+    if (this.state === 'starting') return { label: 'STARTING', clock: '…', map: name, line: room + rules(n), status: 'DEPLOYING…', color: '#ffd36b' };
+    const t = Math.max(0, Math.ceil(this.timer));
     const others = this.coop ? (this.coop.host ? this.joinedPeers.size : Math.max(0, (this.joinedCount || 0) - (this.joined ? 1 : 0))) : 0;
-    return `NEXT ROUND ${clock} · ${name} · ${n.mode} · ${n.difficulty}${this.joined ? ' · JOINED ✓' : ' · not joined (mission board)'}${others ? ` · ${others} teammate${others > 1 ? 's' : ''} joined` : ''}`;
+    const team = others ? ` · ${others} teammate${others > 1 ? 's' : ''} in` : '';
+    const status = this.joined ? (this.autoDeploy ? `JOINED ✓ — deploying at the start${team}` : `JOINED ✓ — walk out a DEPLOY door${team}`) : `NOT JOINED — open the mission board${team}`;
+    return { label: 'NEXT ROUND', clock: clock(t), urgent: t <= 10, map: name, line: room + rules(n), status, color: this.joined ? '#7dff8a' : '#ffb347' };
   }
 }

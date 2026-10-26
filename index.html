@@ -109,6 +109,11 @@
   .survivor canvas.big { width: 144px; height: 144px; image-rendering: pixelated; }
   .survivor .name { font-size: 22px; letter-spacing: 2px; min-width: 80px; }
   .survivor .pick.small { margin-top: 0; padding: 6px 12px; }
+  .survivor .looks { display: grid; grid-template-columns: repeat(4, 40px); gap: 4px; max-height: 184px; justify-content: center; overflow-y: auto; padding: 2px; }
+  .survivor .looks button { width: 40px; height: 40px; padding: 0; margin: 0; background: #151923; border: 1px solid #333842; cursor: pointer; }
+  .survivor .looks button.on { border-color: #ffd36b; box-shadow: 0 0 0 1px #ffd36b; }
+  .survivor .looks button.navfocus, .survivor .looks button:focus-visible { outline: 2px solid #9cd4ff; }
+  .survivor .looks canvas { width: 38px; height: 38px; image-rendering: pixelated; display: block; }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
   .card { background: #15181e; border: 1px solid #333842; color: #ddd; padding: 10px; text-align: left; display: flex; flex-direction: column; gap: 8px; transition: transform .12s, border-color .12s, box-shadow .12s; }
   .card:hover { transform: translateY(-2px); border-color: #777; }

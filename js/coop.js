@@ -7,6 +7,7 @@
 //   it against their own survivor.
 // * Going to 0 HP with a teammate still standing puts you DOWN instead of dead: crawl, bleed out in
 //   25 s (faster while zeds keep chewing), or get revived by a teammate holding USE next to you.
+import { hudScale } from './game.js';
 import { Player, Mob, LOOKS } from './actors.js';
 import { play } from './sfx.js';
 
@@ -403,7 +404,7 @@ export class Coop {
 
   drawScreen(g, ctx, W, H) {
     const inp = g.input, touch = !!(inp && inp.touchUI && inp.lastDevice === 'touch');
-    const u = touch ? Math.max(0.75, Math.min(W, H) / 430) : Math.max(1, Math.round(H / 400));
+    const u = hudScale(W, H, touch);
     this.drawParty(g, ctx, W, u);
     const pl = g.player;
     if (pl.down && !g.ghost) {
@@ -431,6 +432,7 @@ export class Coop {
     // under the minimap (see Game.drawMinimap)
     const mb = g.miniBox;
     let y = Math.round(mb && mb.x > W / 2 ? mb.y + mb.h + 16 * u : (g.input && g.input.touchUI && g.input.lastDevice === 'touch' ? 132 : 70) * u);
+    if (g.opts.lobby && g.cardBox && g.cardBox.full) y = Math.round(g.cardBox.y + g.cardBox.h + 16 * u); // portrait: under the round card
     ctx.fillStyle = 'rgba(8,10,14,0.6)';
     ctx.fillRect(W - 200 * u, y - 13 * u, 192 * u, (rows.length + 1) * 14 * u + 6 * u);
     ctx.fillStyle = '#ffd36b';

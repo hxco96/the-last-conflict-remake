@@ -7,6 +7,7 @@
 //   from every edge, all of them hunting you. Survive it and a supply drop lands at your feet.
 // * Brutal feedback (local only): gibs and blood sprays, kill streaks, a damage-pulse vignette.
 // In co-op the host runs the clock and the elite rolls; clients get the phase through 'dir' messages.
+import { hudScale } from './game.js';
 import { play, sample, music, siren } from './sfx.js';
 
 export const HORDE_FIRST = 240, HORDE_EVERY = 300, HORDE_WARN = 12, HORDE_LEN = 75;
@@ -202,7 +203,7 @@ export class Director {
   drawScreen(ctx, W, H) {
     const g = this.g, inp = g.input;
     const touch = !!(inp && inp.touchUI && inp.lastDevice === 'touch');
-    const u = touch ? Math.max(0.75, Math.min(W, H) / 430) : Math.max(1, Math.round(H / 400));
+    const u = hudScale(W, H, touch);
     // damage pulse: the harder you get hit, the redder the edges
     if (this.pulse > 0.02 && !g.ghost) {
       const gr = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.25, W / 2, H / 2, Math.max(W, H) * 0.65);
@@ -231,7 +232,7 @@ export class Director {
     // touch HUD: the top-left panel is taller, so the badge sits under the weapon panel on the right
     const mb = g.miniBox, ty = mb && mb.x > W / 2 ? Math.max(112 * u, mb.y + mb.h + 12 * u) : 112 * u;
     if (touch) { ctx.textAlign = 'right'; ctx.fillText(label, W - 16 * u, ty); ctx.textAlign = 'left'; }
-    else ctx.fillText(label, 16 * u, 96 * u);
+    else ctx.fillText(label, 10 * u + 8, 10 * u + 4 + 70 * u); // just under the stats panel
     if (this.streakShow > 0 && this.streakText) {
       ctx.textAlign = 'center';
       ctx.font = `${Math.round((26 + Math.min(10, this.streak)) * u)}px Bebas, Impact, sans-serif`;

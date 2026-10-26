@@ -385,7 +385,9 @@ export class Extras {
     if (obj) {
       ctx.font = `${16 * u}px Bebas, Impact, sans-serif`;
       ctx.textAlign = 'center';
-      const w = ctx.measureText(obj).width + 24 * u, y = (g.input && g.input.touchUI && g.input.lastDevice === 'touch') ? 54 * u : 24 + 50 * u;
+      const mb = g.miniBox, w = ctx.measureText(obj).width + 24 * u;
+      let y = (g.input && g.input.touchUI && g.input.lastDevice === 'touch') ? 54 * u : 10 * u + 4;
+      if (mb && mb.x < W / 2 + w / 2 && mb.x + mb.w > W / 2 - w / 2 && mb.y < y + 24 * u) y = mb.y + mb.h + 6 * u; // under a top-centre minimap
       ctx.fillStyle = 'rgba(8,10,14,0.75)'; ctx.fillRect(W / 2 - w / 2, y, w, 24 * u);
       ctx.fillStyle = this.heli ? '#7dff8a' : '#ffd36b';
       ctx.fillText(obj, W / 2, y + 18 * u);
