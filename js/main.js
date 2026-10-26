@@ -7,7 +7,9 @@ import { Profile, SLOT_UPGRADES, DIFFICULTY } from './profile.js';
 import { tierOf, statLine, TIER_COLORS, TIER_NAMES } from './tiers.js';
 import { MODES, THEMES } from './modes.js';
 import { LOOKS } from './actors.js';
-import { unlockAudio, sfx, initAudio, music, setMuted, applyVolumes, play } from './sfx.js';
+import { unlockAudio, sfx, initAudio, music, setMuted, applyVolumes, play, suspendAudio } from './sfx.js';
+import { Net } from './net.js';
+import { Coop } from './coop.js';
 import { Input, ACTIONS, TOUCH_LABELS, loadSettings, saveSettings, resetSettings, keyLabel } from './input.js';
 
 const canvas = document.getElementById('game');
@@ -17,7 +19,7 @@ const toast = document.getElementById('toast');
 let assets, data, session = null, last = 0;
 const profile = new Profile();
 const choice = { map: 0, cls: CLASSES[profile.prefs.cls] ? profile.prefs.cls : 'Riot', look: profile.prefs.look >= 0 && profile.prefs.look < LOOKS.length ? profile.prefs.look : 0, mode: 'Survival', theme: 'Zeds', changing: false };
-const savePrefs = () => { profile.prefs = { cls: choice.cls, look: choice.look }; profile.save(); };
+const savePrefs = () => { profile.prefs = { ...profile.prefs, cls: choice.cls, look: choice.look }; profile.save(); };
 const settings = loadSettings();
 sfx.master = settings.volMaster ?? 0.9;
 sfx.sfxVol = settings.volSfx ?? 0.9;
@@ -51,6 +53,59 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; if (screen && screen.name === 'menu') showMenu(); });
 window.addEventListener('appinstalled', () => { installPrompt = null; showToast('Installed — launch it from your home screen'); });
 const standalone = () => matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone;
+const isIPhone = /iP(hone|od)/.test(navigator.userAgent);
+
+// ---------- fullscreen, focus, screen sleep ----------
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+const canFs = () => !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+let fsRetryArmed = false;
+// Must run inside a user gesture (click / tap / key). Gamepad presses don't count, so a failed
+// attempt arms a retry on the next real tap or key press.
+function goFullscreen(force = false) {
+  if ((!force && settings.autoFullscreen === false) || fsEl() || standalone() || !canFs()) return;
+  const d = document.documentElement;
+  let p;
+  try { p = d.requestFullscreen ? d.requestFullscreen({ navigationUI: 'hide' }) : d.webkitRequestFullscreen(); } catch { armFsRetry(); return; }
+  Promise.resolve(p).then(() => {
+    // landscape lock only if we're already sideways (portrait players keep their layout)
+    if (input.touchUI && screen?.name !== 'menu' && window.screen.orientation && /landscape/.test(window.screen.orientation.type)) window.screen.orientation.lock?.('landscape').catch(() => {});
+    try { navigator.keyboard?.lock?.(['Escape'])?.catch?.(() => {}); } catch { /* not supported */ }
+  }).catch(() => armFsRetry());
+}
+function exitFullscreen() { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch { /* not fullscreen */ } }
+function armFsRetry() {
+  if (fsRetryArmed) return;
+  fsRetryArmed = true;
+  const f = (e) => {
+    if (e.type === 'keydown' && e.code === 'Escape') return;
+    fsRetryArmed = false;
+    window.removeEventListener('pointerup', f, true); window.removeEventListener('keydown', f, true);
+    if (session) goFullscreen();
+  };
+  window.addEventListener('pointerup', f, true); window.addEventListener('keydown', f, true);
+}
+const onFsChange = () => {
+  setTimeout(resize, 50);
+  if (!fsEl()) { try { window.screen.orientation?.unlock?.(); } catch { /* not supported */ } }
+};
+document.addEventListener('fullscreenchange', onFsChange);
+document.addEventListener('webkitfullscreenchange', onFsChange);
+
+let wakeLock = null;
+async function keepAwake() { try { if (navigator.wakeLock && !wakeLock && !document.hidden) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch { /* denied */ } }
+document.addEventListener('visibilitychange', () => {
+  suspendAudio(document.hidden);
+  if (document.hidden) pauseForFocus(); else if (session) keepAwake();
+});
+window.addEventListener('blur', () => pauseForFocus());
+function pauseForFocus() {
+  if (!session || screen || settings.pauseOnHide === false) return;
+  if (session.view === 'match') showPause();
+}
+// no long-press menus / pinch zoom anywhere
+document.addEventListener('contextmenu', (e) => { if (!(e.target && e.target.tagName === 'INPUT')) e.preventDefault(); });
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+['touchend', 'click'].forEach((ev) => window.addEventListener(ev, unlockAudio, { passive: true }));
 
 async function cacheEverything() {
   const reg = await navigator.serviceWorker?.ready;
@@ -72,6 +127,7 @@ function showToast(msg) {
 }
 input.onDevice = (kind, what) => {
   if (kind === 'connected') { showToast(what + ' connected'); if (session) session.active.msg(what + ' connected', '#9cd4ff'); }
+  if (kind === 'disconnected') { showToast(what + ' disconnected'); pauseForFocus(); }
   if (kind === 'switch') { const h = overlay.querySelector('.help'); if (h) h.textContent = controlsHelp(); }
   document.body.classList.toggle('touch', input.touchUI && input.lastDevice === 'touch');
 };
@@ -116,7 +172,9 @@ function open(name, back, ...content) {
   overlay.className = 'menu';
   overlay.append(...content);
   screen = { name, back };
-  if (session && session.view === 'match' && session.match) session.match.paused = true;
+  // solo: menus pause the match; co-op: the world keeps going, you just let go of the controls
+  if (session && session.view === 'match' && session.match) { if (session.coop) session.match.noInput = true; else session.match.paused = true; }
+  if (session && session.coop && session.lobby) session.lobby.noInput = true;
   const keep = overlay.querySelector('[data-focus]');
   if (keep && input.lastDevice === 'pad') focusEl(keep);
 }
@@ -125,7 +183,8 @@ function closePanel() {
   overlay.className = 'hidden';
   overlay.innerHTML = '';
   screen = null;
-  if (session && session.match) session.match.paused = false;
+  if (session && session.match) { session.match.paused = false; session.match.noInput = false; }
+  if (session && session.lobby) session.lobby.noInput = false;
 }
 
 function controlsHelp() {
@@ -208,11 +267,15 @@ function showMenu() {
       el('h3', {}, 'Shooting mode'), mode,
       el('div', { class: 'row' },
         el('button', { class: 'go', 'data-focus': true, onclick: () => { choice.changing = false; savePrefs(); enterLobby(); } }, 'ENTER LOBBY'),
+        el('button', { class: 'pick small', onclick: () => { choice.changing = false; savePrefs(); showCoop(); } }, el('b', {}, '🌐 Co-op online')),
         el('button', { class: 'pick small', onclick: () => showSettings(showMenu) }, el('b', {}, '⚙ Settings')),
         installPrompt && !standalone() ? el('button', { class: 'pick small', onclick: async () => { installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; showMenu(); } }, el('b', {}, '⬇ Install app')) : null),
+      iosHint(),
       el('p', { class: 'help' }, controlsHelp())));
   music('Save Room(RE0)');
 }
+
+const iosHint = () => (isIPhone && !standalone() ? el('p', { class: 'sub' }, '📱 iPhone: tap Share → Add to Home Screen to play fullscreen.') : null);
 
 // Returning players: one big button, class and survivor remembered.
 function showReturning() {
@@ -226,34 +289,81 @@ function showReturning() {
       el('div', {}, el('h2', {}, `${look.name} · ${choice.cls}`), el('p', { class: 'sub left' }, info.tag),
         el('ul', { class: 'perks mini' }, ...perks.map((p) => el('li', {}, el('b', {}, p.name), ' ', el('small', {}, p.desc)))))),
     el('div', { class: 'row' },
-      el('button', { class: 'go', 'data-focus': true, onclick: enterLobby }, 'ENTER LOBBY'),
+      el('button', { class: 'go', 'data-focus': true, onclick: () => enterLobby() }, 'ENTER LOBBY'),
+      el('button', { class: 'pick small', onclick: showCoop }, el('b', {}, '🌐 Co-op online')),
       el('button', { class: 'pick small', onclick: () => { choice.changing = true; showMenu(); } }, el('b', {}, 'Change class / survivor')),
       el('button', { class: 'pick small', onclick: () => showSettings(showMenu) }, el('b', {}, '⚙ Settings'))),
+    iosHint(),
     el('p', { class: 'help' }, controlsHelp())));
   music('Save Room(RE0)');
 }
 
 const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(r, ms))]);
 
-async function enterLobby() {
-  unlockAudio();
-  try {
-    if (input.touchUI && input.lastDevice !== 'kbm') {
-      // never wait on these: some browsers leave the promise pending
-      try { await withTimeout(document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }), 1200); } catch { /* not allowed */ }
-      try { await withTimeout(window.screen.orientation?.lock?.('landscape'), 600); } catch { /* not supported */ }
+// ---------- online co-op ----------
+let coopBusy = false;
+function showCoop(status = '') {
+  const name = el('input', { type: 'text', maxlength: 14, value: profile.prefs.name || LOOKS[choice.look].name, placeholder: 'Your name' });
+  const code = el('input', { type: 'text', maxlength: 5, placeholder: 'CODE', class: 'code', autocapitalize: 'characters', autocomplete: 'off', spellcheck: 'false' });
+  const remember = () => { profile.prefs = { ...profile.prefs, cls: choice.cls, look: choice.look, name: name.value.trim().slice(0, 14) || LOOKS[choice.look].name }; profile.save(); };
+  const go = async (role) => {
+    if (coopBusy) return;
+    if (role === 'join' && !/^[A-Za-z]{5}$/.test(code.value.trim())) { showCoop('Type the 5-letter room code your friend sees.'); return; }
+    remember();
+    goFullscreen(); // still inside the click
+    coopBusy = true;
+    showCoop(role === 'host' ? 'Opening a room…' : 'Connecting…');
+    const net = new Net();
+    try {
+      if (role === 'host') await net.host(); else await net.join(code.value);
+      coopBusy = false;
+      const coop = new Coop(net, { name: profile.prefs.name, look: choice.look, cls: choice.cls });
+      await enterLobby(coop);
+    } catch (err) {
+      coopBusy = false;
+      net.close();
+      showCoop('Could not connect: ' + (err && err.message || err));
     }
+  };
+  open('coop', showMenu, el('div', { class: 'panel' },
+    el('h2', {}, 'CO-OP ONLINE'),
+    el('p', { class: 'sub' }, 'Up to 4 survivors. The host runs the zeds and the rounds; everyone keeps their own coins, weapons and loot. Fall in a fight and you go DOWN — a teammate can pick you up.'),
+    el('div', { class: 'row' }, el('label', { class: 'sub' }, 'Name '), name),
+    el('div', { class: 'row' },
+      el('button', { class: 'go', 'data-focus': true, onclick: () => go('host') }, 'HOST A GAME')),
+    el('h3', {}, 'Join a friend'),
+    el('div', { class: 'row' }, code, el('button', { class: 'pick small', onclick: () => go('join') }, el('b', {}, 'JOIN'))),
+    status ? el('p', { class: 'sub status' }, status) : null,
+    el('p', { class: 'help' }, 'Peer-to-peer over the internet (WebRTC) — no account needed. Some strict school or work networks block it.'),
+    el('button', { class: 'pick small', onclick: showMenu }, el('b', {}, 'Back'))));
+  code.addEventListener('keydown', (e) => { if (e.key === 'Enter') go('join'); });
+}
+
+function leaveSession(toMenu = true) {
+  if (session && session.match && session.match.ext) session.match.ext.stop();
+  if (session && session.coop) session.coop.close();
+  session = null;
+  if (toMenu) showMenu();
+}
+
+async function enterLobby(coop = null) {
+  unlockAudio();
+  goFullscreen(); // before the first await so the click still counts as a user gesture
+  keepAwake();
+  try {
     savePrefs();
     closePanel();
     loading.textContent = 'Loading the base…';
     loading.style.display = 'grid';
-    session = new Session({ canvas, assets, data, input, profile, cls: choice.cls, look: LOOKS[choice.look], ui: { merchant: showMerchant, board: showBoard, results: showResults, storage: showStorage } });
+    session = new Session({ canvas, assets, data, input, profile, cls: choice.cls, look: LOOKS[choice.look], coop, ui: { merchant: showMerchant, board: showBoard, results: showResults, storage: showStorage } });
+    if (coop) coop.net.onLost = () => { showToast('Lost the connection to the host'); leaveSession(); };
     await withTimeout(session.init(), 20000);
     if (!session.lobby || !session.lobby.map) throw new Error('the base did not finish loading');
     loading.style.display = 'none';
     canvas.focus();
   } catch (err) {
     console.error(err);
+    if (coop) coop.close();
     session = null;
     loading.style.display = 'none';
     showToast('Could not enter the lobby: ' + err.message);
@@ -291,6 +401,18 @@ function showStorage() {
 }
 
 // ---------- results ----------
+const mmss = (t) => `${Math.floor(t / 60)}m ${String(Math.floor(t % 60)).padStart(2, '0')}s`;
+function recordLine(r) {
+  if (!r) return null;
+  const parts = [];
+  if (r.cause) parts.push(el('p', { class: 'cause' }, `Cause of death: ${r.cause}`));
+  parts.push(el('p', { class: r.newRecord ? 'record new' : 'record' }, r.newRecord
+    ? `★ NEW RECORD — ${mmss(r.time)} on ${r.key}${r.prev ? ` (old best ${mmss(r.prev.time)})` : ''}`
+    : r.prev ? `Best on ${r.key}: ${mmss(r.prev.time)} — you were ${mmss(Math.max(0, r.prev.time - r.time))} short` : `Survived ${mmss(r.time)}`));
+  parts.push(el('p', { class: 'sub' }, `Threat reached ${r.threat} · hordes survived ${r.hordes}`));
+  return el('div', {}, ...parts);
+}
+
 function showResults(s) {
   const title = s.result === 'won' ? (s.wonText || 'Victory').toUpperCase() : s.result === 'retreated' ? 'RETREATED' : 'YOU DIED';
   const p = s.pay;
@@ -303,6 +425,8 @@ function showResults(s) {
       p.win ? el('tr', {}, el('td', {}, 'Objective bonus'), el('td', {}, String(p.win))) : null,
       el('tr', {}, el('td', {}, `Difficulty ×${p.mult}`), el('td', {}, '')),
       el('tr', { class: 'total' }, el('td', {}, 'Coins earned'), el('td', {}, '+' + p.total))),
+    recordLine(s.record),
+    s.coop ? el('p', { class: 'sub' }, 'Your teammates are still fighting — spectate them from the mission board.') : null,
     el('p', {}, `Bank: ${profile.coins} coins — spend them at the merchant and the tables.`),
     el('button', { class: 'go', 'data-focus': true, onclick: closePanel }, 'BACK TO THE BASE')));
 }
@@ -352,7 +476,8 @@ function showMerchant() {
 let boardTab = 'host';
 function showBoard() {
   const S = session, n = S.next;
-  const chip = (cat, value, label, small) => el('button', { class: 'pick' + (n[cat] === value ? ' on' : ''), onclick: () => { if (boardTab === 'host') n[cat] = value; else S.vote(cat, value); showBoard(); } },
+  if (S.coop && S.coop.client) boardTab = 'vote'; // only the host can pick
+  const chip = (cat, value, label, small) => el('button', { class: 'pick' + (n[cat] === value ? ' on' : ''), onclick: () => { if (boardTab === 'host') { n[cat] = value; S.broadcastState(); } else S.vote(cat, value); showBoard(); } },
     el('b', {}, label), small ? el('small', {}, small) : null, boardTab === 'vote' ? el('small', {}, `${S.tally(cat, value)} vote${S.tally(cat, value) === 1 ? '' : 's'}`) : null);
   const mapsList = boardTab === 'host' ? assets.mapIndex.map((m, i) => i).filter((i) => assets.mapIndex[i].name !== 'Base') : S.ballot.map;
   const status = S.state === 'running'
@@ -369,8 +494,9 @@ function showBoard() {
       S.joined && S.state !== 'running' ? el('button', { class: 'pick small', onclick: () => { S.leaveQueue(); showBoard(); } }, el('b', {}, 'Leave')) : null,
       S.state === 'running' && S.match.ghost ? el('button', { class: 'pick small', onclick: () => { closePanel(); S.spectate(true); } }, el('b', {}, '👁 Spectate')) : null,
       S.state === 'intermission' && S.joined ? el('button', { class: 'pick small', onclick: () => { S.startSoon(); closePanel(); } }, el('b', {}, '⏩ Start now')) : null),
-    el('div', { class: 'tabs' }, ...[['host', 'Host pick'], ['vote', 'Vote']].map(([id, name]) => el('button', { class: 'tab' + (boardTab === id ? ' on' : ''), onclick: () => { boardTab = id; S.hostMode = id === 'host'; showBoard(); } }, name))),
-    boardTab === 'vote' ? el('p', { class: 'sub left' }, 'Each player gets one vote per category; the most-voted option wins (ties: host). Only local players are connected in this build.') : null,
+    S.coop && S.coop.client ? null : el('div', { class: 'tabs' }, ...[['host', 'Host pick'], ['vote', 'Vote']].map(([id, name]) => el('button', { class: 'tab' + (boardTab === id ? ' on' : ''), onclick: () => { boardTab = id; S.hostMode = id === 'host'; S.broadcastState(); showBoard(); } }, name))),
+    boardTab === 'vote' ? el('p', { class: 'sub left' }, S.coop ? (S.coop.client && S.hostMode ? 'The host is picking this round — your vote is shown to them.' : 'Each player gets one vote per category; the most-voted option wins (ties: host).') : 'Each player gets one vote per category; the most-voted option wins (ties: host). Solo: your vote decides.') : null,
+    S.coop ? el('p', { class: 'sub' }, `Room ${S.coop.code} · ${S.coop.count}/4 players — share the code to invite friends.`) : null,
     el('h3', {}, 'Map'), el('div', { class: 'choices' }, ...mapsList.map((i) => chip('map', i, assets.mapIndex[i].name, `${assets.mapIndex[i].w}×${assets.mapIndex[i].h}${assets.mapIndex[i].floors > 1 ? ` · ${assets.mapIndex[i].floors}F` : ''}`))),
     el('h3', {}, 'Mode'), el('div', { class: 'choices' }, ...(boardTab === 'host' ? Object.keys(MODES) : S.ballot.mode).map((k) => chip('mode', k, k, MODES[k].desc))),
     n.mode === 'Peaceful' ? null : el('h3', {}, 'Spawn theme'),
@@ -381,13 +507,15 @@ function showBoard() {
 
 function showPause() {
   const inMatch = session && session.view === 'match';
-  open('pause', closePanel, el('div', { class: 'panel' }, el('h1', {}, 'PAUSED'),
+  open('pause', closePanel, el('div', { class: 'panel' }, el('h1', {}, session && session.coop ? 'MENU' : 'PAUSED'),
+    session && session.coop ? el('p', { class: 'sub' }, `Co-op room ${session.coop.code} · ${session.coop.count}/4 — the game keeps running while this menu is open.`) : null,
     el('button', { class: 'go', 'data-focus': true, onclick: closePanel }, 'Resume'),
     el('div', { class: 'row' },
       el('button', { class: 'pick', onclick: () => showSettings(showPause) }, el('b', {}, '⚙ Settings')),
+      canFs() && !standalone() ? el('button', { class: 'pick', onclick: () => { if (fsEl()) exitFullscreen(); else goFullscreen(true); closePanel(); } }, el('b', {}, fsEl() ? '⛶ Exit fullscreen' : '⛶ Fullscreen')) : null,
       inMatch ? el('button', { class: 'pick', onclick: () => { closePanel(); session.retreat(); } }, el('b', {}, '🏳 Retreat to base')) : null,
-      el('button', { class: 'pick', onclick: () => { if (session && session.match) session.match.ext.stop(); session = null; choice.changing = true; showMenu(); } }, el('b', {}, 'Change class / survivor')),
-      el('button', { class: 'pick', onclick: () => { if (session && session.match) session.match.ext.stop(); session = null; choice.changing = false; showMenu(); } }, el('b', {}, 'Quit to title'))),
+      el('button', { class: 'pick', onclick: () => { choice.changing = true; leaveSession(); } }, el('b', {}, 'Change class / survivor')),
+      el('button', { class: 'pick', onclick: () => { choice.changing = false; leaveSession(); } }, el('b', {}, session && session.coop ? 'Leave co-op' : 'Quit to title'))),
     el('p', { class: 'help' }, controlsHelp())));
 }
 
@@ -486,6 +614,10 @@ function showSettings(back) {
       el('p', { class: 'sub left' }, 'Legacy mode locks onto the closest visible zed in your weapon\'s range and keeps firing while the button is held. Each shot rolls a weighted hit chance: weapon class accuracy, distance versus weapon range, whether you are standing / walking / running, target size and whether it is rushing, a Frenzy bonus, and a pity bonus that grows after every miss. Misses fly just past the target.'),
       toggle('Show hit chance on the lock-on reticle', 'showHitChance'),
       toggle('Weather effects', 'weather', 'rain with thunder and snow (applies next game)'),
+      toggle('Gore', 'gore', 'limbs come off, gibs and blood sprays'),
+      el('h3', {}, 'Screen & device'),
+      toggle('Auto fullscreen', 'autoFullscreen', 'go fullscreen when you enter the base (iPhone: use Add to Home Screen instead)'),
+      toggle('Pause when the game loses focus', 'pauseOnHide', 'switching apps or tabs pauses solo games (co-op keeps running)'),
       el('h3', {}, 'Offline'),
       el('p', { class: 'sub left' }, 'The game core works offline once loaded. Maps and music are saved as you play them — or grab everything now (~30 MB).'),
       el('button', { class: 'pick small', onclick: cacheEverything }, el('b', {}, '⬇ Download everything for offline')),
@@ -506,7 +638,7 @@ function showSettings(back) {
       el('p', { class: 'sub left' }, 'Left stick moves, right stick aims (sticks are fixed). In legacy mode the fire button auto-targets the closest zed. In menus: D-pad / left stick to move, ✕ to select, ○ to go back.'),
       el('div', { class: 'opts' },
         slider('Stick deadzone', 'deadzone', 0.05, 0.45, 0.01, (v) => Math.round(v * 100) + '%'),
-        toggle('Vibration', 'vibration', 'DualSense / gamepad rumble on shots, hits and explosions'),
+        toggle('Vibration', 'vibration', 'DualSense / gamepad rumble on shots, hits and explosions; phone buzz on hits (Android)'),
         toggle('Run at full stick tilt', 'stickRun')),
       el('p', { class: 'sub left' }, `Hold bindings (press ~0.4 s): ${Object.entries(settings.padHold || {}).map(([a, b]) => `${(ACTIONS.find((x) => x.id === a) || { label: a }).label} = hold ${b.map((i) => input.padButtonLabel(i)).join('/')}`).join(' · ')}`),
       el('table', { class: 'binds' }, el('tr', {}, el('th', {}, 'Action'), el('th', {}, 'Button'), el('th', {}, 'Alternate')),
@@ -614,7 +746,7 @@ function frameBody(t) {
     input.padTapped.clear();
   }
   if (session && session.lobby) {
-    if (!screen || session.view !== 'match') session.update(dt);
+    if (!screen || session.view !== 'match' || session.coop) session.update(dt);
     else if (session.match) session.match.update(0); // paused in-match menu
     session.render();
     if (session.view === 'spectate') drawSpectateBar();

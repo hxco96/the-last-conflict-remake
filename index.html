@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="assets/img/icons/icon-192.png">
@@ -12,7 +13,10 @@
 <title>The Last Conflict — Remake</title>
 <style>
   @font-face { font-family: Bebas; src: url(assets/img/BebasNeue-Regular.ttf); }
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: Bebas, Impact, sans-serif; color: #e8e8e8; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: Bebas, Impact, sans-serif; color: #e8e8e8;
+    overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  input[type=text] { -webkit-user-select: text; user-select: text; }
+  button { touch-action: manipulation; }
   /* fill exactly the visible area (not 100vh, which on phones includes the hidden address bar) and stay clear of notches */
   canvas#game { display: block; position: fixed; cursor: none; image-rendering: pixelated;
     left: env(safe-area-inset-left, 0px); top: env(safe-area-inset-top, 0px);
@@ -21,7 +25,8 @@
   @supports (height: 100dvh) { canvas#game { height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); } }
   #loading { position: fixed; inset: 0; display: grid; place-items: center; font-size: 28px; letter-spacing: 2px; }
   #overlay.hidden { display: none; }
-  #overlay.menu { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,0.55); overflow: auto; padding: 24px 0; }
+  #overlay.menu { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,0.55); overflow: auto; padding: 24px 0;
+    padding: max(24px, env(safe-area-inset-top)) env(safe-area-inset-right) max(24px, env(safe-area-inset-bottom)) env(safe-area-inset-left); box-sizing: border-box; }
   .panel { box-sizing: border-box; background: rgba(10,12,16,0.92); border: 1px solid #2c3038; padding: 22px 28px; max-width: 460px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.6); }
   .panel.wide { max-width: 980px; width: calc(100vw - 80px); }
   h1 { font-size: 56px; margin: 0; letter-spacing: 4px; color: #d8352a; text-shadow: 0 3px 0 #000; }
@@ -57,6 +62,12 @@
   .pick.danger { border-color: #6b2a2a; color: #ffb0b0; margin-top: 10px; }
   .choices.mode .pick { flex: 1 1 200px; }
   .sub.left { text-align: left; line-height: 1.5; }
+  .panel input[type=text] { background: #0d0f13; color: #ffd36b; border: 1px solid #333842; padding: 10px 12px; font-family: inherit; font-size: 22px; letter-spacing: 2px; width: 200px; }
+  .panel input.code { width: 130px; text-transform: uppercase; letter-spacing: 6px; text-align: center; }
+  .sub.status { color: #ffd36b; }
+  .record { font-size: 20px; letter-spacing: 1px; color: #9cd4ff; margin: 8px 0 2px; }
+  .record.new { color: #ffd36b; font-size: 24px; }
+  .cause { color: #ff6b6b; font-size: 18px; letter-spacing: 1px; margin: 6px 0 0; }
   .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 12px; }
   .tab { background: #15181e; color: #aab; border: 1px solid #333842; padding: 8px 14px; font-size: 17px; letter-spacing: 1px; }
   .tab.on { color: #ffd36b; border-color: #ffd36b; background: #2a2414; }
@@ -77,7 +88,7 @@
   select.editing { border-color: #ffd36b; }
   @keyframes blink { 50% { opacity: 0.5; } }
   .navfocus, .navfocus:focus { outline: 3px solid #ffd36b !important; outline-offset: 2px; }
-  #toast { position: fixed; top: 16px; left: 50%; transform: translate(-50%, -80px); background: rgba(10,12,16,0.92); border: 1px solid #ffd36b; color: #ffd36b; padding: 8px 18px; font-size: 20px; letter-spacing: 1px; transition: transform .3s; z-index: 10; pointer-events: none; }
+  #toast { position: fixed; top: calc(16px + env(safe-area-inset-top, 0px)); left: 50%; transform: translate(-50%, -80px); background: rgba(10,12,16,0.92); border: 1px solid #ffd36b; color: #ffd36b; padding: 8px 18px; font-size: 20px; letter-spacing: 1px; transition: transform .3s; z-index: 10; pointer-events: none; }
   #toast.show { transform: translate(-50%, 0); }
   @media (pointer: coarse), (max-width: 760px), (max-height: 520px) {
     #overlay.menu { padding: 10px 0; align-items: start; }

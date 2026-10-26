@@ -19,10 +19,12 @@ export class FlowField {
     return 0;
   }
 
-  compute(tx, ty) {
+  // Sources: the player's cell plus any extra [x, y] cells (co-op teammates).
+  compute(tx, ty, more = []) {
     const m = this.map, w = m.w, h = m.h, dist = this.dist;
     dist.fill(-1);
-    if (!m.inBounds(tx, ty)) return;
+    const seeds = [[tx, ty], ...more].filter(([x, y]) => m.inBounds(x, y));
+    if (!seeds.length) return;
     const heap = this.heap;
     heap.length = 0;
     const push = (d, i) => {
@@ -47,9 +49,7 @@ export class FlowField {
       }
       return top;
     };
-    const start = ty * w + tx;
-    dist[start] = 0;
-    push(0, start);
+    for (const [x, y] of seeds) { const start = y * w + x; dist[start] = 0; push(0, start); }
     while (heap.length) {
       const [d, i] = pop();
       if (d > dist[i] && dist[i] !== -1) continue;

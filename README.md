@@ -49,7 +49,39 @@ This converts the `.rktd` s-expression tables to JSON. It also decompresses 6 Ti
 - **Inventory:** generic weapon slots; ammo lives in typed slots (auto top-up only for a type you already carry, new types need Use); grenades/mines/molotovs are a separate counted pouch, switched with Toggle throwable (T / △ / hold NADE).
 - **Shooting** is hitscan: no visible bullets, impacts show on the zombie or wall; recoil bloom and range falloff. Explosives and flamethrowers stay projectiles.
 - **Spawns** follow the original MobSpawn rects (map edges), never on screen or within 480 px; floors without reachable rects use the outer ring of the playable area. Infected climb through windows.
-- Networking is not part of this build: votes tally the local player only.
+- **Votes** tally every connected player in co-op (most votes wins, ties go to the host); solo, your vote decides.
+
+## Online co-op (up to 4)
+
+- **Title → 🌐 Co-op online:** *Host a game* opens a room and shows a 5-letter code; friends type it under *Join a friend*. No account or server: players connect peer-to-peer over WebRTC through the free PeerJS matchmaker (`js/vendor/peerjs.min.js`, MIT). Some strict school/work networks block WebRTC.
+- **Who runs what:** the host simulates the zeds, spawns, NPCs, objectives and the round timer. Each player simulates their own survivor, so movement and shooting feel instant. Hits are sent to the host, which applies them and reports kills back.
+- **Loot and coins are per player:** whoever lands the kill rolls the drop on their own map, and everyone keeps their own coins, weapons and records.
+- **Down, not out:** at 0 HP with a teammate still standing you go DOWN for 25 s. You can crawl, and zeds keep chewing on you, which shortens the timer. A teammate holds USE next to you for 2.5 s to pick you up at 30% HP (+15 coins for them).
+- **Your death ends your run, not the round:** you get your results and go back to the base, and can spectate the rest from the mission board. The round ends when the objective is done or nobody is left standing.
+- **Squad play:** the squad deploys together. Stairs move the whole team to the new floor. Hordes grow by 60% for each extra survivor.
+- **Menus don't pause** a co-op game; they only take your hands off the controls.
+- **Testing locally:** open `http://localhost:8123/?net=local` in two tabs. They connect through a `BroadcastChannel` instead of the internet.
+
+## Survival director (`js/survival.js`)
+
+- **Endless threat:** after minute 3, each minute adds +10% zed HP and +6% zed damage. Spawns speed up, and the population cap keeps growing past the old ceiling of 50. THREAT is shown under the HUD.
+- **Horde nights:** the first comes at 4:00, then one every 5 minutes. A siren gives a 12 s warning. Then the screen turns red, spawns pour in from every edge and every zed hunts you for 75 s, and each later horde lasts longer. Survive it and a supply drop lands next to you (ammo, herbs, a weapon roll).
+- **Elites:** these show a coloured ring and get more common with threat and during hordes.
+  - **Armored** (grey) takes 35% less damage.
+  - **Frenzied** (red) is fast.
+  - **Bloated** (green) bursts into acid when it dies.
+- **Scarcity:** kill drops thin out after minute 4 (down to 40%), so crafting and melee start to matter.
+- **Brutal feedback:**
+  - **Gore:** kills throw gibs that splatter as decals (toggle in Settings; Medic *Sanitation* also hides them).
+  - **Kill streaks:** CARNAGE → BRUTAL → SLAUGHTER → MASSACRE → UNSTOPPABLE.
+  - **Damage pulse:** the screen edges glow red in proportion to the hits you take.
+- **Records:** best time for each map · mode · difficulty, plus the most hordes survived and highest threat reached. The results screen shows NEW RECORD or how far short you fell, and the cause of death.
+
+## Platform support
+
+- **Auto fullscreen:** goes fullscreen when you enter the base (Settings → *Auto fullscreen*). Pause has a ⛶ button to toggle it. A blocked attempt, such as from a controller press, retries on your next tap or key. iPhone has no browser fullscreen, so the title shows an *Add to Home Screen* hint.
+- **Losing focus pauses solo games:** this covers switching apps or tabs, a controller disconnecting, and the window losing focus. Audio is suspended while the game is hidden. The screen is kept awake (Wake Lock).
+- **Touch:** phones start in touch mode. Long-press menus, pinch zoom, text selection and pull-to-refresh are blocked. Android phones buzz on hits and blasts. Menus respect notches and safe areas.
 
 ## Game modes & original features
 
@@ -100,6 +132,9 @@ Default keyboard/mouse:
 - `js/game.js`: game loop, survival spawner from `spawn_levels_zeds`, AI, items, perks, lighting, HUD
 - `js/npc.js`: soldier and survivor NPCs (random paper-doll looks, names and barks from the original data, squad following, shooting, down/revive)
 - `js/input.js`: rebindable action layer for keyboard/mouse, gamepads (DualSense labels, rumble), touch sticks and buttons, and persisted settings
+- `js/net.js`: co-op transport (PeerJS WebRTC, or BroadcastChannel with `?net=local`), room codes, star topology
+- `js/coop.js`: co-op glue: snapshots, mirrored zeds and NPCs on clients, hit/kill relay, avatars, down and revive, party HUD
+- `js/survival.js`: survival director: endless threat, horde nights, elites, gore, kill streaks, damage pulse
 - `js/sfx.js`: plays the original FMOD sounds (positional SFX, music playlist, boss/menu/death themes, volume settings)
 - `tools/fsb5.js`: converts FMOD `sfx.bank` / `music.bank` (FSB5 Vorbis) into standalone `.ogg` files in pure Node. FMOD strips the Vorbis setup headers, so they are restored from vgmstream's table (`tools/vendor/vorbis_codebooks_fsb.h`).
 

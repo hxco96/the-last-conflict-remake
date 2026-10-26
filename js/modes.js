@@ -63,7 +63,7 @@ export class Extras {
   // ---------- objectives ----------
   objective() {
     const g = this.g;
-    if (this.mode === 'Extermination') return `EXTERMINATE  ${Math.min(g.kills, this.cfg.quota)} / ${this.cfg.quota}`;
+    if (this.mode === 'Extermination') return `EXTERMINATE  ${Math.min(g.teamKills || 0, this.cfg.quota)} / ${this.cfg.quota}`;
     if (this.mode === 'Evac' && !this.heli) {
       const left = Math.max(0, this.cfg.heliAt - g.time);
       return `HELICOPTER ETA  ${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}`;
@@ -86,6 +86,7 @@ export class Extras {
   win(text) {
     const g = this.g;
     if (g.over) return;
+    if (g.isClient) { if (!this.winSent) { this.winSent = true; g.coop.net.toHost({ t: 'win', text }); } return; } // the host ends it for everyone
     g.won = text;
     g.over = true;
     g.bark('relief');
@@ -288,7 +289,7 @@ export class Extras {
     if (g.over) return;
     this.updateWeather(dt);
     if (this.noSpawn) {} // Peaceful
-    if (this.mode === 'Extermination' && g.kills >= this.cfg.quota) this.win('Area exterminated!');
+    if (this.mode === 'Extermination' && (g.teamKills || 0) >= this.cfg.quota) this.win('Area exterminated!');
     if (this.mode === 'Evac' && !this.heli && g.time >= this.cfg.heliAt) this.callHeli();
     if (this.mode === 'Rescue' && !this.heli) {
       const s = this.survivors();

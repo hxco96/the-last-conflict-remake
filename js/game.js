@@ -10,6 +10,7 @@ import { norm } from './data.js';
 import { Extras, THEMES } from './modes.js';
 import { LobbyExt } from './lobby.js';
 import { spawnNPC, updateNPC, hurtNPC, reviveNPC, rescueSurvivor } from './npc.js';
+import { Director } from './survival.js';
 
 // Group unlock delays from spawn_levels_*.rktd are in seconds; scaled so a solo run sees them sooner.
 const TIME_SCALE = 1 / 3;
@@ -53,6 +54,8 @@ export class Game {
     this.z = -1;
     this.pendingFollow = [];
     this.onStairs = false;
+    this.coop = this.opts.coop || null; // online co-op (see coop.js); null = solo
+    this.nidSeq = 0;
     this.fx = new Effects(this.atlas.combat);
     this.projectiles = new Projectiles(this);
     this.coinsList = [];
@@ -98,6 +101,7 @@ export class Game {
     if (!this.opts.lobby) this.populate();
     if (!this.opts.lobby) this.msg(`${this.opts.mode || 'Survival'} · ${this.opts.theme || 'Zeds'} — ${this.opts.map.name}, ${this.opts.cls} class`, '#ffd36b');
     this.ext = this.opts.lobby ? new LobbyExt(this) : new Extras(this);
+    this.dir = new Director(this);
     this.ghost = !!this.opts.spectate;
     this.spec = { x: this.player.x, y: this.player.y };
   }
@@ -145,12 +149,17 @@ export class Game {
       const x0 = s.cx * T - 7, x1 = s.cx * T + T + 7, y0 = s.cy * T - 6, y1 = s.cy * T + T + 8;
       if (pl.x > x0 && pl.x < x1 && pl.y > y0 && pl.y < y1) { st = s; break; }
     }
-    if (st && !this.onStairs) { this.changeFloor(st); return; }
+    if (st && !this.onStairs) {
+      if (this.isClient) { this.coop.net.toHost({ t: 'stairs', cx: st.cx, cy: st.cy }); this.onStairs = true; return; }
+      this.changeFloor(st); return;
+    }
     this.onStairs = !!st;
   }
 
-  changeFloor(st) {
+  changeFloor(st, remote = false) {
     const pl = this.player;
+    if (this.isHost) this.coop.net.broadcast({ t: 'floor', to: st.to, x: st.x, y: st.y });
+    if (remote && this.ghost) { this.setFloor(st.to); this.spec.x = st.x; this.spec.y = st.y; return; }
     // zeds that are on your heels follow you up/down a moment later
     const followers = this.mobs.filter((m) => m.alive && m.seen && !m.boss && Math.hypot(m.x - pl.x, m.y - pl.y) < 96);
     this.mobs = this.mobs.filter((m) => !followers.includes(m));
@@ -241,6 +250,7 @@ export class Game {
       const p = map.randomWalkable();
       if (d && p) this.pickups.push(this.makePickup(d.name, p.x, p.y - 8, null));
     }
+    if (this.isClient) return; // the host owns NPCs and zeds
     // Friendly NPCs: "Soilder" markers are soldiers, "Survivor" markers civilians to rescue.
     const placeSome = (list, max, kind) => {
       const pool = [...(list || [])].sort(() => Math.random() - 0.5).slice(0, max);
@@ -290,6 +300,8 @@ export class Game {
   }
 
   // ---------- helpers ----------
+  get isClient() { return !!(this.coop && this.coop.client && !this.opts.lobby); }
+  get isHost() { return !!(this.coop && this.coop.host && !this.opts.lobby); }
   hasPerk(p) { return this.perks.has(p) && (!FRENZY_PERKS.has(p) || this.frenzyT > 0); }
   msg(text, color = '#e8e8e8') { this.messages.push({ text, color, t: 5 }); if (this.messages.length > 6) this.messages.shift(); }
   bark(kind) {
@@ -365,11 +377,14 @@ export class Game {
   }
 
   spawnMob(id, x, y) {
+    if (this.isClient) return null; // zeds come from the host's snapshots
     const def = this.data.mobs.get(id);
     if (!def) return null;
     const m = new Mob(def, x, y, this.mobAtlas(def), this.data.outfits);
     if (!m.layers.length) return null;
     m.maxHp = m.hp = Math.round(m.maxHp * (this.diff ? this.diff.hp : 1));
+    if (this.dir) this.dir.onSpawn(m); // endless threat scaling + elites
+    m.nid = ++this.nidSeq;
     this.mobs.push(m);
     return m;
   }
@@ -388,7 +403,7 @@ export class Game {
   }
 
   deploy(loadout) {
-    const sp = this.pickSpawn();
+    const sp = this.squadSpawn() || this.pickSpawn();
     const pl = this.player;
     if (loadout) { this.ammo.slots.length = 0; this.throwables.counts.clear(); this.items.clear(); this.applyLoadout(loadout); }
     pl.x = sp.x; pl.y = sp.y; pl.hp = pl.maxHp; pl.alive = true; pl.jumpT = 0;
@@ -397,6 +412,16 @@ export class Game {
     this.aliveTime = 0; this.kills = 0;
     this.flowT = 0;
     this.msg('Deployed! ' + (this.ext.cfg ? this.ext.cfg.desc : ''), '#7dff8a');
+  }
+
+  // co-op: deploy next to a teammate (or the host's chosen start) instead of a random spawn marker
+  squadSpawn() {
+    if (!this.coop) return null;
+    const near = (x, y) => this.map.randomWalkable({ x: x - 40, y: y - 40, w: 80, h: 80 });
+    const mate = this.avatars && [...this.avatars.values()].find((a) => a.visible && a.alive && !a.down);
+    if (mate) return near(mate.x, mate.y);
+    if (this.teamSpawn && this.z === this.spawnFloor()) return near(this.teamSpawn.x, this.teamSpawn.y) || this.teamSpawn;
+    return null;
   }
 
   spawnPoint() {
@@ -416,9 +441,11 @@ export class Game {
     }
     if (!cells.length) return null;
     const pl = this.player, cam = this.cam, map = this.map;
+    const mates = this.coop ? this.coop.targets(this) : [];
     for (let i = 0; i < 16; i++) {
       const [cx, cy] = cells[(Math.random() * cells.length) | 0];
       const x = cx * T + 16, y = cy * T + 24;
+      if (mates.some((a) => Math.hypot(x - a.x, y - a.y) < 420)) continue;
       if (!this.ghost) {
         if (Math.hypot(x - pl.x, y - pl.y) < 480) continue;
         if (cam && x > cam.x - 48 && x < cam.x + cam.vw + 48 && y > cam.y - 48 && y < cam.y + cam.vh + 64) continue;
@@ -458,8 +485,11 @@ export class Game {
     }
     if (this.spawnT > 0) return;
     const alive = this.mobs.filter((m) => m.alive).length;
-    const cap = Math.min(8 + this.time / 8, 50) * (this.diff ? this.diff.spawn : 1);
-    this.spawnT = Math.max(0.5, 2.2 - this.time / 200);
+    // bigger hordes for bigger squads (Left 4 Dead style: +60% per extra survivor)
+    const squad = 1 + (this.coop ? this.coop.targets(this).length : 0);
+    let [cap, interval] = this.dir.spawnTuning(Math.min(8 + this.time / 8, 50) * (this.diff ? this.diff.spawn : 1), Math.max(0.5, 2.2 - this.time / 200));
+    cap *= 1 + 0.6 * (squad - 1);
+    this.spawnT = interval;
     if (alive >= cap) return;
     const open = this.groups.filter((g) => this.time >= g.unlock);
     if (!open.length) return;
@@ -487,11 +517,24 @@ export class Game {
     if (!m.alive) return;
     let d = dmg * (src.mul || 1);
     if (src.crit && Math.random() < src.crit) { d *= src.critMul || 2; this.fx.spawn('bspark', m.x, m.cy, { scale: 0.8 }); play.crit(m.x, m.cy); }
-    d *= 1 - (m.def.armor || 0);
+    d *= (1 - (m.def.armor || 0)) * (1 - (m.eliteArmor || 0));
+    const stunned = !!(src.stun && Math.random() < src.stun);
+    if (this.isClient) {
+      // the host applies the damage; show the hit right away
+      m.hp -= d; m.flash = 0.08; m.localHitT = 0.3;
+      if (stunned) this.fx.spawn('stun', m.x, m.cy - 12);
+      if (Math.random() < 0.12) this.bloodDecal(m.x + (Math.random() - 0.5) * 10, m.y - 2, 0.5);
+      this.coop.sendHit(m, d, src, stunned);
+      return;
+    }
+    this.applyDamage(m, d, src, stunned);
+  }
+
+  applyDamage(m, d, src, stunned) {
     m.hp -= d;
     m.flash = 0.08;
     m.seen = true;
-    if (src.stun && Math.random() < src.stun) { m.stun = 0.8; this.fx.spawn('stun', m.x, m.cy - 12); }
+    if (stunned) { m.stun = 0.8; this.fx.spawn('stun', m.x, m.cy - 12); }
     const a = src.ang ?? Math.atan2(src.vy || 0, src.vx || 0);
     if (!m.boss) m.move(this.map, Math.cos(a) * (src.melee ? 5 : 1.5), Math.sin(a) * (src.melee ? 5 : 1.5));
     if (Math.random() < 0.12) this.bloodDecal(m.x + (Math.random() - 0.5) * 10, m.y - 2, 0.5);
@@ -499,19 +542,33 @@ export class Game {
     else if (Math.random() < 0.3) play.mob('pain', m.def.name, m.x, m.y);
   }
 
-  killMob(m) {
+  killMob(m, src = {}) {
+    this.killFx(m);
+    this.teamKills = (this.teamKills || 0) + 1;
+    const by = src.by || 'H';
+    if (this.isHost) this.coop.hostKill(this, m, by);
+    if (this.dir) this.dir.onKill(m);
+    if (by === 'H') this.killReward(m);
+  }
+
+  killFx(m) {
     m.alive = false;
     m.deadT = 0;
     play.mob('death', m.def.name, m.x, m.y);
     if (m.boss && !this.mobs.some((o) => o.alive && o.boss)) music('playlist');
-    this.kills++;
     this.fx.spawn('blood-explode', m.x, m.cy, { scale: m.boss ? 2 : 1 });
     this.bloodDecal(m.x, m.y - 2, 1);
-    const value = m.boss ? 100 : m.def.hp >= 800 ? 20 : 5;
+    if (this.dir && (m.boss || Math.random() < 0.6)) this.dir.goreBurst(m);
+  }
+
+  // Credit for a kill you landed: frenzy, perks and the loot roll (loot is per player in co-op).
+  killReward(m) {
+    this.kills++;
+    if (this.dir) this.dir.onMyKill();
     this.fx.spawn('coin', m.x, m.y - 14, { scale: 0.35 });
     if (this.frenzyT <= 0) this.frenzy = Math.min(25, this.frenzy + 1);
     if (this.hasPerk('HeavyHits')) this.player.hp = Math.min(this.player.maxHp, this.player.hp + 3);
-    const d = this.data.rollDrop(1);
+    const d = Math.random() < this.dir.dropChance() ? this.data.rollDrop(1) : null;
     if (d) this.pickups.push(this.makePickup(d.name, m.x, m.y - 6, null));
     if (m.boss) for (let i = 0; i < 3; i++) { const g = this.rollLoot(2, true); if (g) this.pickups.push(this.makePickup(g.name, m.x + i * 12 - 12, m.y, null, null, true)); }
   }
@@ -542,13 +599,15 @@ export class Game {
     this.atlas.combat.drawCentered(ctx, found.list[0].f, pl.x + (Math.random() - 0.5) * 24, pl.y + (Math.random() - 0.3) * 10, 1, Math.random() * 6);
   }
 
-  explosion(x, y, radius, dmg, element) {
+  explosion(x, y, radius, dmg, element, visualOnly = false) {
     const base = element === 'fire' ? 'explode-fire' : element === 'acid' ? 'explode-acid' : element === 'freeze' ? 'explode-freeze' : 'explosion';
     this.fx.spawn(base, x, y, { scale: radius / 40 });
     if (base !== 'explosion') this.fx.spawn('explosion', x, y, { scale: radius / 64 });
     this.tempLights.push({ x, y, r: radius * 3, t: 0.35, max: 0.35 });
     this.shake = Math.max(this.shake, 7);
     play.explode(x, y);
+    if (visualOnly) return; // a teammate's blast: their game applies the damage
+    if (this.coop && !this.opts.lobby) this.coop.boom(this, x, y, radius, element);
     if (this.input) this.input.rumble('boom');
     if (element === 'fire' && this.ext) this.ext.addFire(x, y, radius * 0.7, this.hasPerk('Scorched') ? 12 : 6);
     for (const m of this.mobs) {
@@ -572,7 +631,10 @@ export class Game {
   hurtPlayer(dmg, kind) {
     const pl = this.player;
     if (!pl.alive) return;
-    if (/^(bite|rush|acid|web)$/.test(kind)) dmg *= this.diff ? this.diff.dmg : 1;
+    if (pl.down) { pl.downT -= dmg * 0.08; pl.hurtT = 0.15; return; } // zeds keep feeding on you
+    if (/^(bite|rush|acid|web)$/.test(kind)) dmg *= (this.diff ? this.diff.dmg : 1) * (this.dir ? this.dir.dmgMul : 1);
+    this.lastHurt = kind;
+    if (this.dir) this.dir.hurt(dmg);
     if (this.hasPerk('PainTolerance')) dmg *= 1 - Math.min(0.5, (pl.maxHp - pl.hp) / 100);
     pl.hp -= dmg;
     pl.hurtT = 0.15;
@@ -593,12 +655,59 @@ export class Game {
         return;
       }
       pl.hp = 0;
-      pl.alive = false;
-      this.deathT = 0;
-      play.die(this.female);
-      this.msg('You died.', '#ff4b4b');
+      if (this.coop && !this.opts.lobby && this.coop.teammatesUp()) {
+        pl.down = true; pl.downT = 25; this.reload = null; this.bleed = 0;
+        play.die(this.female);
+        this.msg('You are DOWN! A teammate can revive you — hold on.', '#ff4b4b');
+        return;
+      }
+      this.die();
     }
   }
+
+  die() {
+    const pl = this.player;
+    pl.hp = 0; pl.down = false;
+    pl.alive = false;
+    this.deathT = 0;
+    play.die(this.female);
+    this.msg('You died.', '#ff4b4b');
+  }
+
+  revive(by) {
+    const pl = this.player;
+    pl.down = false; pl.downT = 0;
+    pl.hp = Math.round(pl.maxHp * 0.3);
+    this.fx.spawn('heal-quick', pl.x, pl.y - 14);
+    this.msg(`${by} picked you up!`, '#7dff8a');
+  }
+
+  // co-op: a downed survivor crawls and bleeds out
+  updateDowned(dt) {
+    const pl = this.player, inp = this.input;
+    pl.downT -= dt;
+    pl.moving = false; pl.running = false;
+    if (pl.downT <= 0) { this.die(); return; }
+    if (!this.coop.teammatesUp() && pl.downT > 3) pl.downT = 3; // nobody left to save you
+    const mv = inp ? inp.move : { mag: 0 };
+    if (mv.mag > 0) { pl.move(this.map, (mv.x / mv.mag) * 18 * dt, (mv.y / mv.mag) * 18 * dt); pl.moving = true; }
+  }
+
+  // co-op client: the team changed floor (host decides)
+  teamFloor(m) {
+    if (m.to === this.z) return;
+    const pl = this.player;
+    this.setFloor(m.to);
+    if (this.mirror) this.mirror.clear();
+    this.mobs.length = 0;
+    this.npcMirror = [];
+    if (!this.ghost) { pl.x = m.x; pl.y = m.y; if (this.map.boxHits(pl.x, pl.y, pl.hw, pl.hh)) this.unstick(pl); }
+    else { this.spec.x = m.x; this.spec.y = m.y; }
+    this.onStairs = true;
+    this.projectiles.list.length = 0;
+    this.msg(`Team moved to floor ${m.to + 1} / ${this.floorCount}`, '#9cd4ff');
+  }
+
 
   alertMobs(x, y, radius) {
     for (const m of this.mobs) if (m.alive && Math.abs(m.x - x) < radius * 2 && Math.abs(m.y - y) < radius * 2) m.seen = true;
@@ -801,8 +910,13 @@ export class Game {
 
     if (this.ghost) this.updateSpectator(dt);
     else {
+      // co-op: menus don't pause the world, they only take your hands off the controls
+      const inp = this.input;
+      if (this.noInput) this.input = null;
       this.handleActions();
       this.updatePlayer(dt);
+      if (this.coop) this.coop.updateRevive(this, dt);
+      this.input = inp;
       this.checkStairs();
       this.updateFollowers(dt);
       sfx.listener.x = pl.x; sfx.listener.y = pl.y;
@@ -812,25 +926,33 @@ export class Game {
       if (this.deathT > 2.2 && !this.over) { this.over = true; this.onEnd(); }
     }
 
-    this.flowT -= dt;
-    const [pcx, pcy] = cellOf(pl);
-    if (this.flowT <= 0 || pcx !== this.flowCell?.[0] || pcy !== this.flowCell?.[1]) {
-      if (this.flowT <= 0 || this.flowT < 0.2) {
-        this.flow.compute(pcx, pcy);
-        this.flowCell = [pcx, pcy];
-        this.flowT = 0.4;
+    if (this.isClient) {
+      // zeds and NPCs are simulated by the host and mirrored here (coop.updateMirror)
+      if (this.ext) this.ext.update(dt);
+    } else {
+      this.flowT -= dt;
+      const [pcx, pcy] = cellOf(pl);
+      if (this.flowT <= 0 || pcx !== this.flowCell?.[0] || pcy !== this.flowCell?.[1]) {
+        if (this.flowT <= 0 || this.flowT < 0.2) {
+          // zeds path to the nearest survivor: you plus any teammates on this floor
+          const more = this.coop ? this.coop.targets(this).map(cellOf) : [];
+          this.flow.compute(pcx, pcy, more);
+          this.flowCell = [pcx, pcy];
+          this.flowT = 0.4;
+        }
       }
-    }
 
-    this.updateSpawner(dt);
-    if (this.ext) this.ext.update(dt);
-    for (const m of this.mobs) this.updateMob(m, dt);
-    for (const n of this.npcs) updateNPC(this, n, dt);
-    this.separateHumans();
-    this.separateMobs();
-    this.mobs = this.mobs.filter((m) => m.alive || m.deadT < 2);
+      this.updateSpawner(dt);
+      if (this.ext) this.ext.update(dt);
+      for (const m of this.mobs) this.updateMob(m, dt);
+      for (const n of this.npcs) updateNPC(this, n, dt);
+      this.separateHumans();
+      this.separateMobs();
+      this.mobs = this.mobs.filter((m) => m.alive || m.deadT < 2);
+    }
     this.projectiles.update(dt);
     this.fx.update(dt);
+    if (this.dir) this.dir.update(dt);
     for (const c of map.cades) c.hit = Math.max(0, c.hit - dt);
 
     // coins fly to the player
@@ -860,7 +982,7 @@ export class Game {
   // ---------- input ----------
   handleActions() {
     const inp = this.input;
-    if (!inp || !this.player.alive) return;
+    if (!inp || !this.player.alive || this.player.down) return;
     const P = (a) => inp.pressed(a);
     const select = (i) => { if (this.slots[i] && i !== this.cur) { this.prev = this.cur; this.cur = i; this.reload = null; } };
     const cycle = (dir) => {
@@ -956,6 +1078,7 @@ export class Game {
         if (!pl.jumpT) this.unstick(pl);
       } else if (pl.jumpT <= 0) { pl.jumpT = 0; pl.landGrace = 0; play.step(pl.x, pl.y); }
     }
+    if (pl.down) { this.updateDowned(dt); return; }
     const s = this.slots[this.cur];
 
     // legacy lock-on (always computed in legacy mode so the reticle shows)
@@ -1036,6 +1159,7 @@ export class Game {
       }
       if (trigger && s.cd <= 0) {
         if (fireWeapon(this, s, fx, fy)) {
+          if (this.coop && s.isGun) this.coop.shot(this, s.item);
           if (inp && s.isGun) inp.rumble(s.item.damage >= 140 || (s.item.spread || 1) > 1 ? 'heavy' : 'shot');
           s.cd = rate;
           this.recoilT = 0.08;
@@ -1087,8 +1211,8 @@ export class Game {
       m.stateT += dt;
       if (!m.hitDone && m.stateT >= 0.35) {
         m.hitDone = true;
-        if (m.pending) { this.projectiles.list.push(m.pending); m.pending = null; }
-        else if (d < 26 + m.radius && pl.alive && !pl.airborne) { if (pl.npc) hurtNPC(this, pl, m.atkDmg); else this.hurtPlayer(m.atkDmg, 'bite'); }
+        if (m.pending) { this.projectiles.list.push(m.pending); if (this.isHost) this.coop.sendProj(this, m.pending); m.pending = null; }
+        else if (d < 26 + m.radius && pl.alive && !pl.airborne) { if (pl.npc) hurtNPC(this, pl, m.atkDmg); else if (pl.remote) this.coop.hurtRemote(pl, m.atkDmg, 'bite'); else this.hurtPlayer(m.atkDmg, 'bite'); }
       }
       if (m.stateT >= 0.7) m.state = 'walk';
       return;
@@ -1096,7 +1220,7 @@ export class Game {
     if (m.state === 'rush') {
       m.stateT += dt;
       if (!m.move(map, m.rushV[0] * dt, m.rushV[1] * dt)) m.stateT = 1;
-      if (!m.hitDone && d < 14 + m.radius && pl.alive) { m.hitDone = true; this.hurtPlayer(m.atkDmg, 'rush'); }
+      if (!m.hitDone && d < 14 + m.radius && pl.alive) { m.hitDone = true; if (pl.remote) this.coop.hurtRemote(pl, m.atkDmg, 'rush'); else if (!pl.npc) this.hurtPlayer(m.atkDmg, 'rush'); }
       if (m.stateT > 0.55) m.state = 'walk';
       return;
     }
@@ -1171,6 +1295,10 @@ export class Game {
         const d = Math.hypot(n.x - m.x, n.y - m.y);
         if (d < bd && d < 260) { bd = d; best = n; }
       }
+      if (this.coop) for (const a of this.coop.targets(this)) {
+        const d = Math.hypot(a.x - m.x, a.y - m.y) * 0.85;
+        if (d < bd) { bd = d; best = a; }
+      }
       m.tgt = best;
     }
     return m.tgt;
@@ -1218,6 +1346,7 @@ export class Game {
       let b = grid.get(k); if (!b) grid.set(k, (b = [])); b.push(m);
     }
     const pl = this.player;
+    const humans = [pl.alive ? pl : null, ...(this.coop ? this.coop.targets(this) : [])].filter(Boolean);
     for (const m of live) {
       const gx = (m.x / 24) | 0, gy = (m.y / 24) | 0;
       for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
@@ -1229,8 +1358,8 @@ export class Game {
           if (d > 0 && d < min) { const push = (min - d) * 0.25; m.move(this.map, (dx / d) * push, (dy / d) * push); }
         }
       }
-      if (pl.alive) {
-        const dx = m.x - pl.x, dy = m.y - pl.y, d = Math.hypot(dx, dy), min = m.radius + 4;
+      for (const h of humans) {
+        const dx = m.x - h.x, dy = m.y - h.y, d = Math.hypot(dx, dy), min = m.radius + 4;
         if (d > 0 && d < min) m.move(this.map, (dx / d) * (min - d), (dy / d) * (min - d));
       }
     }
@@ -1280,9 +1409,10 @@ export class Game {
     for (const d of map.doors) if (inView(d.x, d.y)) list.push([d.y + 30, () => map.drawDynamic(ctx, d)]);
     for (const c of map.cades) if (inView(c.x, c.y)) list.push([c.y + 30, () => map.drawDynamic(ctx, c)]);
     for (const p of this.pickups) if (inView(p.x, p.y)) list.push([p.y, () => this.drawPickup(ctx, p)]);
-    for (const m of this.mobs) if (inView(m.x, m.y)) list.push([m.alive ? m.y : m.y - 40, () => m.draw(ctx, this.atlas.infected)]);
+    for (const m of this.mobs) if (inView(m.x, m.y)) list.push([m.alive ? m.y : m.y - 40, () => { if (m.elite && m.alive) this.dir.drawElite(ctx, m); m.draw(ctx, this.atlas.infected); }]);
     if (!this.ghost) list.push([pl.y, () => pl.draw(ctx, this.atlas.core, () => this.drawHeldWeapon(ctx))]);
     if (this.ext && this.ext.drawables) this.ext.drawables(list, ctx);
+    if (this.coop) this.coop.drawAvatars(this, list, ctx, inView);
     for (const n of this.npcs) if (inView(n.x, n.y)) list.push([n.alive ? n.y : n.y - 30, () => n.draw(ctx, this.atlas.core, n.weapon ? () => this.drawWeapon(ctx, n, n.weapon, n.recoilT > 0, n.flashT > 0) : null)]);
     list.sort((a, b) => a[0] - b[0]);
     for (const [, f] of list) f();
@@ -1291,17 +1421,21 @@ export class Game {
     if (this.ext) this.ext.drawAir(ctx);
     this.projectiles.draw(ctx, this.atlas.combat);
     this.fx.draw(ctx);
+    if (this.dir) this.dir.drawGibs(ctx);
     for (const c of this.coinsList) {
       const found = this.atlas.combat.find('coin', ['default'], ['x']);
       if (found) this.atlas.combat.drawCentered(ctx, Atlas.frameAt(found.list, c.t * 1000), c.x, c.y, 0.4);
     }
     this.drawOverheads(ctx);
+    if (this.coop) this.coop.drawOverheads(this, ctx);
 
     this.renderLighting(ctx, zoom, camX, camY);
     this.drawLockOn(ctx, zoom, camX, camY);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (this.ext) this.ext.drawScreen(ctx, cv.width, cv.height, Math.max(1, Math.round(cv.height / 400)));
     this.drawHud(ctx, cv.width, cv.height);
+    if (this.dir) this.dir.drawScreen(ctx, cv.width, cv.height);
+    if (this.coop) this.coop.drawScreen(this, ctx, cv.width, cv.height);
   }
 
   // Legacy lock-on reticle (screen space, drawn above the darkness so it stays readable).
