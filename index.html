@@ -13,7 +13,12 @@
 <style>
   @font-face { font-family: Bebas; src: url(assets/img/BebasNeue-Regular.ttf); }
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: Bebas, Impact, sans-serif; color: #e8e8e8; }
-  canvas#game { display: block; width: 100vw; height: 100vh; cursor: none; image-rendering: pixelated; }
+  /* fill exactly the visible area (not 100vh, which on phones includes the hidden address bar) and stay clear of notches */
+  canvas#game { display: block; position: fixed; cursor: none; image-rendering: pixelated;
+    left: env(safe-area-inset-left, 0px); top: env(safe-area-inset-top, 0px);
+    width: calc(100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    height: calc(100% - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+  @supports (height: 100dvh) { canvas#game { height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); } }
   #loading { position: fixed; inset: 0; display: grid; place-items: center; font-size: 28px; letter-spacing: 2px; }
   #overlay.hidden { display: none; }
   #overlay.menu { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,0.55); overflow: auto; padding: 24px 0; }

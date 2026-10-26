@@ -143,7 +143,7 @@ export class Input {
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => { this.keys.clear(); this.touch.pointers.clear(); this.touch.move = this.touch.aim = null; this.touch.buttons.clear(); });
-    c.addEventListener('mousemove', (e) => { this.mouse.x = e.clientX; this.mouse.y = e.clientY; this.setDevice('kbm'); });
+    c.addEventListener('mousemove', (e) => { this.mouse.x = this.px(e); this.mouse.y = this.py(e); this.setDevice('kbm'); });
     c.addEventListener('mousedown', (e) => {
       const code = 'Mouse' + e.button;
       if (this.capture && this.capture.kind === 'key') { this.capture.done(code); e.preventDefault(); return; }
@@ -178,6 +178,10 @@ export class Input {
     if (this.lastDevice !== d) { this.lastDevice = d; this.onDevice('switch', d); }
   }
 
+  // pointer position relative to the canvas (it may sit inside the safe area)
+  px(e) { return e.clientX - this.canvas.getBoundingClientRect().left; }
+  py(e) { return e.clientY - this.canvas.getBoundingClientRect().top; }
+
   // ---- touch ----
   // Buttons with a `hold` action fire their tap action on release (<450 ms) and the hold action
   // once the finger stays down; "menu" toggles the secondary-action fan.
@@ -186,7 +190,7 @@ export class Input {
     this.touchUI = true;
     const L = this.touch.layout;
     if (!L) return;
-    const p = { id: e.pointerId, x: e.clientX, y: e.clientY, role: null, t: performance.now() };
+    const p = { id: e.pointerId, x: this.px(e), y: this.py(e), role: null, t: performance.now() };
     for (const b of L.buttons) {
       if (Math.hypot(p.x - b.x, p.y - b.y) > b.r + 6 * L.u) continue;
       p.role = 'btn:' + b.id;
@@ -209,7 +213,7 @@ export class Input {
   touchMove(e) {
     const p = this.touch.pointers.get(e.pointerId);
     if (!p) return;
-    p.x = e.clientX; p.y = e.clientY;
+    p.x = this.px(e); p.y = this.py(e);
     const st = p.role === 'move' ? this.touch.move : p.role === 'aim' ? this.touch.aim : null;
     if (st) {
       st.x = p.x; st.y = p.y;

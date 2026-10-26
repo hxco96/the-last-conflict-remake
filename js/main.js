@@ -26,11 +26,15 @@ const input = new Input(canvas, settings);
 let screen = null;      // { name, back } for the open overlay screen
 let settingsTab = 'gameplay';
 
+// Backing size = the canvas's on-screen size, so drawing and touch coordinates stay 1:1
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  const r = canvas.getBoundingClientRect();
+  canvas.width = Math.max(1, Math.round(r.width || window.innerWidth));
+  canvas.height = Math.max(1, Math.round(r.height || window.innerHeight));
 }
 window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
 resize();
 window.addEventListener('pointerdown', unlockAudio);
 
