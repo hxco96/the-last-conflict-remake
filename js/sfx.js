@@ -161,6 +161,27 @@ export function music(name, force = false) {
   musicEl.play().catch(() => { /* waits for a user gesture; unlockAudio retries */ });
 }
 
+// Air-raid style siren for horde nights (synthesised: no sample in the original banks).
+export function siren(dur = 6) {
+  if (sfx.muted || !ensure()) return;
+  const now = ac.currentTime, o = ac.createOscillator(), g = ac.createGain(), lfo = ac.createOscillator(), lg = ac.createGain();
+  o.type = 'sawtooth'; o.frequency.value = 420;
+  lfo.frequency.value = 0.45; lg.gain.value = 180;
+  lfo.connect(lg).connect(o.frequency);
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.09, now + 0.8);
+  g.gain.setValueAtTime(0.09, now + dur - 1.2);
+  g.gain.linearRampToValueAtTime(0, now + dur);
+  o.connect(g).connect(sfxBus);
+  o.start(now); lfo.start(now); o.stop(now + dur); lfo.stop(now + dur);
+}
+
+// Background tab / app switch: silence everything until we're visible again.
+export function suspendAudio(on) {
+  try { if (ac) (on ? ac.suspend() : ac.resume()); } catch { /* not started */ }
+  if (musicEl) { if (on) musicEl.pause(); else if (musicWant) music(musicWant, true); }
+}
+
 export function nowPlaying() { return musicEl && !musicEl.paused ? musicEl.src.split('/').pop() : null; }
 
 // ---------- game-facing helpers ----------

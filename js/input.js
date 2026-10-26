@@ -40,6 +40,9 @@ const XBOX_NAMES = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 
 
 export const DEFAULT_SETTINGS = {
   legacy: false,          // legacy shooting: auto-target the closest visible zed
+  autoFullscreen: true,   // go fullscreen when you enter the base (and on the next tap if blocked)
+  pauseOnHide: true,      // pause (solo) when the tab/app is hidden or loses focus
+  gore: true,             // dismemberment, gibs and blood sprays
   showHitChance: true,
   weather: true,
   vibration: true,
@@ -108,7 +111,8 @@ export class Input {
     this.padLabels = PS_NAMES;
     this.padName = '';
     this.mouse = { x: 0, y: 0 };
-    this.lastDevice = 'kbm';
+    // phones/tablets start in touch mode (menus cover the canvas, so the first tap can't tell us)
+    this.lastDevice = matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches ? 'touch' : 'kbm';
     this.aimAngle = 0;
     this.aimMag = 0;             // stick/touch aim strength (0..1)
     this.move = { x: 0, y: 0, mag: 0 };
@@ -162,6 +166,9 @@ export class Input {
     window.addEventListener('pointercancel', up);
 
     window.addEventListener('gamepadconnected', (e) => this.padConnected(e.gamepad));
+    window.addEventListener('gamepaddisconnected', () => { if (this.lastDevice === 'pad') this.setDevice(this.touchUI ? 'touch' : 'kbm'); this.onDevice('disconnected', this.padName || 'Controller'); });
+    // any tap/click (menus included) tells us which device is in use — hybrid laptops, Chromebooks
+    window.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') this.setDevice('touch'); else if (e.pointerType === 'mouse' && e.target !== c) this.setDevice('kbm'); }, true);
   }
 
   padConnected(gp) {
@@ -371,9 +378,12 @@ export class Input {
 
   rumble(kind) {
     const g = this.pad;
-    if (!g || !this.settings.vibration || this.lastDevice !== 'pad') return;
+    if (!this.settings.vibration) return;
     const fx = { shot: [60, 0.15, 0.35], heavy: [120, 0.5, 0.6], hurt: [180, 0.8, 0.4], boom: [350, 1, 0.8] }[kind];
     if (!fx) return;
+    // phones: short buzzes for hits and blasts (Android; iOS has no vibration API)
+    if (this.lastDevice === 'touch') { if (kind !== 'shot' && navigator.vibrate) { try { navigator.vibrate(Math.round(fx[0] / 3)); } catch { /* blocked */ } } return; }
+    if (!g || this.lastDevice !== 'pad') return;
     const act = g.vibrationActuator || (g.hapticActuators && g.hapticActuators[0]);
     try {
       if (act && act.playEffect) act.playEffect('dual-rumble', { duration: fx[0], strongMagnitude: fx[1], weakMagnitude: fx[2] });
