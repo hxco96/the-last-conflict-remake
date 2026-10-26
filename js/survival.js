@@ -229,7 +229,8 @@ export class Director {
     const nextIn = Math.max(0, Math.ceil(this.nextHorde - g.time));
     const label = `THREAT ${t}${this.hordes ? ` · HORDES ${this.hordes}` : ''}${this.phase === 'calm' && nextIn < 60 ? ` · horde in ${nextIn}s` : ''}`;
     // touch HUD: the top-left panel is taller, so the badge sits under the weapon panel on the right
-    if (touch) { ctx.textAlign = 'right'; ctx.fillText(label, W - 16 * u, 112 * u); ctx.textAlign = 'left'; }
+    const mb = g.miniBox, ty = mb && mb.x > W / 2 ? Math.max(112 * u, mb.y + mb.h + 12 * u) : 112 * u;
+    if (touch) { ctx.textAlign = 'right'; ctx.fillText(label, W - 16 * u, ty); ctx.textAlign = 'left'; }
     else ctx.fillText(label, 16 * u, 96 * u);
     if (this.streakShow > 0 && this.streakText) {
       ctx.textAlign = 'center';

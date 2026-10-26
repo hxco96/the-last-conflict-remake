@@ -41,6 +41,15 @@ export function stackPrice(item) {
 }
 
 // Match payout: kills, time alive, objective, difficulty.
+// Mission-board "Zombie count": multiplies the population cap, spawn pace and the starting zeds.
+export const ZOMBIE_COUNT = {
+  Few: { mul: 0.5, desc: 'about half the usual zeds' },
+  Normal: { mul: 1, desc: 'the intended amount' },
+  Many: { mul: 1.5, desc: '+50% zeds' },
+  Swarm: { mul: 2, desc: 'twice as many' },
+  Apocalypse: { mul: 3, desc: 'three times as many — bring ammo' },
+};
+
 export function payout({ kills, alive, won, difficulty }) {
   const d = DIFFICULTY[difficulty] || DIFFICULTY.Normal;
   const k = kills * 3;

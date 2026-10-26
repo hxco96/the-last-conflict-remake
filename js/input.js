@@ -43,6 +43,7 @@ export const DEFAULT_SETTINGS = {
   autoFullscreen: true,   // go fullscreen when you enter the base (and on the next tap if blocked)
   pauseOnHide: true,      // pause (solo) when the tab/app is hidden or loses focus
   gore: true,             // dismemberment, gibs and blood sprays
+  minimap: true,          // map overlay with teammates highlighted
   showHitChance: true,
   weather: true,
   vibration: true,

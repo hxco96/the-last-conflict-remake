@@ -3,7 +3,7 @@ import { GameData } from './data.js';
 import { CLASSES } from './game.js';
 import { Atlas } from './assets.js';
 import { Session } from './session.js';
-import { Profile, SLOT_UPGRADES, DIFFICULTY } from './profile.js';
+import { Profile, SLOT_UPGRADES, DIFFICULTY, ZOMBIE_COUNT } from './profile.js';
 import { tierOf, statLine, TIER_COLORS, TIER_NAMES } from './tiers.js';
 import { MODES, THEMES } from './modes.js';
 import { LOOKS } from './actors.js';
@@ -355,7 +355,7 @@ async function enterLobby(coop = null) {
     closePanel();
     loading.textContent = 'Loading the base…';
     loading.style.display = 'grid';
-    session = new Session({ canvas, assets, data, input, profile, cls: choice.cls, look: LOOKS[choice.look], coop, ui: { merchant: showMerchant, board: showBoard, results: showResults, storage: showStorage } });
+    session = new Session({ canvas, assets, data, input, profile, cls: choice.cls, look: LOOKS[choice.look], coop, ui: { merchant: showMerchant, board: showBoard, results: showResults, storage: showStorage, armory: showArmory } });
     if (coop) coop.net.onLost = () => { showToast('Lost the connection to the host'); leaveSession(); };
     await withTimeout(session.init(), 20000);
     if (!session.lobby || !session.lobby.map) throw new Error('the base did not finish loading');
@@ -398,6 +398,36 @@ function showStorage() {
     el('h3', {}, `Carried (${L.slots.filter(Boolean).length}/${L.slots.length})`), carried,
     el('h3', {}, `Storage (${P.storage.length}/${cap})`), stored,
     el('button', { class: 'go', 'data-focus': true, onclick: closePanel }, 'Close')));
+}
+
+// ---------- armory: every weapon type in one screen, tabbed by category ----------
+let armoryTab = null;
+function showArmory(cat) {
+  const L = session.lobby.ext, cats = L.catalog || [];
+  if (cat) armoryTab = cat;
+  const cur = cats.find((c) => c.label === armoryTab) || cats[0];
+  if (!cur) return;
+  armoryTab = cur.label;
+  const tabs = el('div', { class: 'tabs' }, ...cats.map((c) => el('button', { class: 'tab' + (c === cur ? ' on' : ''), onclick: () => showArmory(c.label) }, c.label)));
+  const body = el('div', { class: 'grid' });
+  for (const d of cur.items) {
+    const it = d.it, t = tierOf(it), owned = d.weapon && L.owned(it);
+    const state = owned ? (L.carried(it) ? 'Carried ✓' : 'In storage ✓') : `Buy — ${d.price}c`;
+    body.append(el('div', { class: 'cell tall', style: d.weapon ? `border-color:${TIER_COLORS[t]}` : '' },
+      iconCanvas(it.name), el('b', { style: d.weapon ? `color:${TIER_COLORS[t]}` : '' }, it.name),
+      d.weapon ? el('small', {}, statLine(it, (k) => it[k])) : el('small', {}, L.describe(d).replace(/^Buy /, '').replace(/ — \d+c$/, '')),
+      el('button', { class: 'up' + (owned || profile.coins < d.price ? ' off' : ''), onclick: () => {
+        if (owned) return;
+        L.take(d);
+        const m = session.lobby.messages[session.lobby.messages.length - 1];
+        if (m) showToast(m.text);
+        showArmory();
+      } }, state)));
+  }
+  open('armory', closePanel, el('div', { class: 'panel wide' },
+    el('h2', {}, `Armory — ${profile.coins} coins`),
+    el('p', { class: 'sub' }, 'Every table sells the full catalogue — switch weapon types with the tabs. Weapons stay with you between runs.'),
+    tabs, body, el('button', { class: 'go', 'data-focus': true, onclick: closePanel }, 'Close')));
 }
 
 // ---------- results ----------
@@ -456,7 +486,7 @@ function showMerchant() {
       }
       body.append(el('div', { class: 'cell tall' }, iconCanvas(it.name), el('span', {}, it.name), rows));
     }
-    if (!body.children.length) body.append(el('p', {}, 'Buy weapons at the tables first.'));
+    if (!body.children.length) body.append(el('p', {}, 'Buy weapons at the armory first.'));
   } else {
     body = el('div', { class: 'grid' });
     for (const [k, u] of Object.entries(SLOT_UPGRADES)) {
@@ -479,7 +509,7 @@ function showBoard() {
   if (S.coop && S.coop.client) boardTab = 'vote'; // only the host can pick
   const chip = (cat, value, label, small) => el('button', { class: 'pick' + (n[cat] === value ? ' on' : ''), onclick: () => { if (boardTab === 'host') { n[cat] = value; S.broadcastState(); } else S.vote(cat, value); showBoard(); } },
     el('b', {}, label), small ? el('small', {}, small) : null, boardTab === 'vote' ? el('small', {}, `${S.tally(cat, value)} vote${S.tally(cat, value) === 1 ? '' : 's'}`) : null);
-  const mapsList = boardTab === 'host' ? assets.mapIndex.map((m, i) => i).filter((i) => assets.mapIndex[i].name !== 'Base') : S.ballot.map;
+  const mapsList = assets.mapIndex.map((m, i) => i).filter((i) => assets.mapIndex[i].name !== 'Base'); // same choices for host pick and vote
   const status = S.state === 'running'
     ? `Round ${S.round} is running on ${S.match.opts.map.name}.`
     : `Next round in ${Math.ceil(S.timer)}s — ${S.joined ? 'you are in' + (S.autoDeploy ? ' (auto-deploy)' : ' (you will walk in)') : 'you have not joined'}.`;
@@ -498,9 +528,11 @@ function showBoard() {
     boardTab === 'vote' ? el('p', { class: 'sub left' }, S.coop ? (S.coop.client && S.hostMode ? 'The host is picking this round — your vote is shown to them.' : 'Each player gets one vote per category; the most-voted option wins (ties: host).') : 'Each player gets one vote per category; the most-voted option wins (ties: host). Solo: your vote decides.') : null,
     S.coop ? el('p', { class: 'sub' }, `Room ${S.coop.code} · ${S.coop.count}/4 players — share the code to invite friends.`) : null,
     el('h3', {}, 'Map'), el('div', { class: 'choices' }, ...mapsList.map((i) => chip('map', i, assets.mapIndex[i].name, `${assets.mapIndex[i].w}×${assets.mapIndex[i].h}${assets.mapIndex[i].floors > 1 ? ` · ${assets.mapIndex[i].floors}F` : ''}`))),
-    el('h3', {}, 'Mode'), el('div', { class: 'choices' }, ...(boardTab === 'host' ? Object.keys(MODES) : S.ballot.mode).map((k) => chip('mode', k, k, MODES[k].desc))),
+    el('h3', {}, 'Mode'), el('div', { class: 'choices' }, ...Object.keys(MODES).map((k) => chip('mode', k, k, MODES[k].desc))),
     n.mode === 'Peaceful' ? null : el('h3', {}, 'Spawn theme'),
-    n.mode === 'Peaceful' ? null : el('div', { class: 'choices' }, ...(boardTab === 'host' ? Object.keys(THEMES) : S.ballot.theme).map((k) => chip('theme', k, k === 'BossRush' ? 'Boss Rush' : k))),
+    n.mode === 'Peaceful' ? null : el('div', { class: 'choices' }, ...Object.keys(THEMES).map((k) => chip('theme', k, k === 'BossRush' ? 'Boss Rush' : k))),
+    n.mode === 'Peaceful' ? null : el('h3', {}, 'Zombie count'),
+    n.mode === 'Peaceful' ? null : el('div', { class: 'choices' }, ...Object.entries(ZOMBIE_COUNT).map(([k, z]) => chip('density', k, k, `${z.desc} · up to ~${Math.round(50 * z.mul)} at once`))),
     el('h3', {}, 'Difficulty'), el('div', { class: 'choices' }, ...Object.entries(DIFFICULTY).map(([k, d]) => chip('difficulty', k, k, `${d.desc} · coins ×${d.coins}`))),
     el('button', { class: 'go', onclick: closePanel }, 'Close')));
 }
@@ -617,6 +649,7 @@ function showSettings(back) {
       toggle('Gore', 'gore', 'limbs come off, gibs and blood sprays'),
       el('h3', {}, 'Screen & device'),
       toggle('Auto fullscreen', 'autoFullscreen', 'go fullscreen when you enter the base (iPhone: use Add to Home Screen instead)'),
+      toggle('Minimap', 'minimap', 'small map with you, teammates, zeds and the way out'),
       toggle('Pause when the game loses focus', 'pauseOnHide', 'switching apps or tabs pauses solo games (co-op keeps running)'),
       el('h3', {}, 'Offline'),
       el('p', { class: 'sub left' }, 'The game core works offline once loaded. Maps and music are saved as you play them — or grab everything now (~30 MB).'),
