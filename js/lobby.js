@@ -224,7 +224,6 @@ export class LobbyExt {
 
   // ---------- frame ----------
   update() {}
-  objective() { return this.g.session ? this.g.session.lobbyBanner() : 'LOBBY'; }
 
   drawables(list, ctx) {
     const g = this.g;
@@ -300,24 +299,43 @@ export class LobbyExt {
       ctx.font = `${11 * u}px system-ui, sans-serif`; ctx.fillStyle = '#ccd'; ctx.fillText(t.line, W / 2, y + 34 * u);
       ctx.textAlign = 'left';
     }
-    const obj = this.objective();
-    if (!obj) return;
-    ctx.font = `${15 * u}px Bebas, Impact, sans-serif`;
-    ctx.textAlign = 'center';
-    const mb = this.g.miniBox;
-    let w = ctx.measureText(obj).width + 24 * u;
-    // keep clear of a top-centre minimap (touch landscape)
-    let y = mb && mb.x < W / 2 && mb.x + mb.w > W / 2 ? mb.y + mb.h + 6 : 24 + 50 * u, cx = W / 2;
-    // and of a top-right minimap: slide left, or drop below it if there is no room
-    if (mb && mb.x > W / 2 && cx + w / 2 > mb.x - 8 && y + 24 * u > mb.y) {
-      const room = mb.x - 16;
-      if (w > room) { ctx.font = `${Math.max(10, 15 * u * (room - 24 * u) / (w - 24 * u))}px Bebas, Impact, sans-serif`; w = Math.min(room, ctx.measureText(obj).width + 24 * u); }
-      cx = Math.max(w / 2 + 8, mb.x - 8 - w / 2);
-    }
-    ctx.fillStyle = 'rgba(8,10,14,0.8)'; ctx.fillRect(cx - w / 2, y, w, 24 * u);
-    ctx.fillStyle = '#9cd4ff'; ctx.fillText(obj, cx, y + 17 * u);
-    ctx.textAlign = 'left';
   }
+
+  // Next-round card: big countdown on the left; map, rules and your join status on the right.
+  // Scales down to fit the band the HUD gives it; returns its height.
+  drawCard(ctx, cx, y, maxW, u) {
+    const S = this.g.session, info = S && S.lobbyInfo();
+    if (!info) return 0;
+    const F = (px) => `${Math.round(px)}px Bebas, Impact, sans-serif`;
+    const wOf = (t, px) => { ctx.font = F(px); return ctx.measureText(t).width; };
+    const sizes = { label: 12, clock: 32, map: 18, line: 13, status: 13 };
+    const natural = (k) => {
+      const lw = Math.max(wOf(info.label, sizes.label * u * k), wOf(info.clock, sizes.clock * u * k));
+      const rw = Math.max(wOf(info.map, sizes.map * u * k), wOf(info.line, sizes.line * u * k), wOf(info.status, sizes.status * u * k) + 14 * u * k);
+      return { lw, rw, w: lw + rw + 34 * u * k };
+    };
+    let k = 1, n = natural(1);
+    if (n.w > maxW) { k = Math.max(0.55, maxW / n.w); n = natural(k); }
+    const pad = 10 * u * k, h = 66 * u * k, x = cx - n.w / 2;
+    ctx.fillStyle = 'rgba(8,10,14,0.86)'; ctx.fillRect(x, y, n.w, h);
+    ctx.strokeStyle = info.color; ctx.globalAlpha = 0.7; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, n.w - 2, h - 2); ctx.globalAlpha = 1; ctx.lineWidth = 1;
+    ctx.textAlign = 'center';
+    const lc = x + pad + n.lw / 2;
+    ctx.font = F(sizes.label * u * k); ctx.fillStyle = '#9aa'; ctx.fillText(info.label, lc, y + 18 * u * k);
+    const blink = info.urgent && Math.floor(performance.now() / 300) % 2;
+    ctx.font = F(sizes.clock * u * k); ctx.fillStyle = info.urgent ? (blink ? '#ff3b3b' : '#ffd36b') : '#fff'; ctx.fillText(info.clock, lc, y + 52 * u * k);
+    const dx = x + pad * 1.5 + n.lw + 2 * u * k;
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(dx, y + 8 * u * k, 1, h - 16 * u * k);
+    ctx.textAlign = 'left';
+    const rx = dx + pad;
+    ctx.font = F(sizes.map * u * k); ctx.fillStyle = '#ffd36b'; ctx.fillText(info.map.toUpperCase(), rx, y + 20 * u * k);
+    ctx.font = F(sizes.line * u * k); ctx.fillStyle = '#cdd6e0'; ctx.fillText(info.line, rx, y + 36 * u * k);
+    const sw = wOf(info.status, sizes.status * u * k) + 14 * u * k;
+    ctx.fillStyle = info.color; ctx.globalAlpha = 0.18; ctx.fillRect(rx, y + 42 * u * k, sw, 17 * u * k); ctx.globalAlpha = 1;
+    ctx.fillStyle = info.color; ctx.fillText(info.status, rx + 7 * u * k, y + 55 * u * k);
+    return h;
+  }
+
   placeMineItem() { return false; }
   addFire() {}
   grabbed() {}

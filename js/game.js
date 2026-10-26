@@ -27,6 +27,9 @@ export const CLASSES = {
   Medic: { icon: 'Medic_default_x_0', loadout: ['Beretta92'],
     perks: ['MutualCare', 'PainTolerance', 'TraumaCare', 'Sanitation', 'HealingPulse', 'VitalSigns'] },
 };
+// HUD scale: phones size the HUD to the short screen edge; tablets cap it so panels stay
+// compact instead of blowing up; desktops use whole steps so pixel fonts stay crisp.
+export const hudScale = (W, H, touch) => (touch ? Math.max(0.75, Math.min(1.3, Math.min(W, H) / 430)) : Math.max(1, Math.round((H - 100) / 400)));
 const FRENZY_PERKS = new Set(['BluntForce', 'Savagery', 'Headshot', 'Dazzle', 'BigBang', 'HealingPulse', 'VitalSigns']);
 const GROUP_NAMES = { 41000: 'Crows', 42000: 'Dogs', 45000: 'Seekers', 46000: 'Reptiles', 44000: 'Venus plants', 49003: 'Roachmen', 47000: 'A boss' };
 
@@ -1629,22 +1632,31 @@ export class Game {
     return this.opts.lobby || this.ghost ? `${bank}c` : `${bank}c  +${this.earnings.total}`;
   }
 
-  // Minimap: the whole floor, you (white arrow), teammates (blue, red when down), nearby zeds (red).
-  drawMinimap(ctx, W, H) {
+  // Where the minimap goes (null when hidden). The HUD lays itself out around it.
+  miniLayout(W, H) {
     const inp = this.input, map = this.map;
-    if (!map || (inp && inp.settings.minimap === false)) return;
+    if (!map || (inp && inp.settings.minimap === false)) return null;
     const touch = !!(inp && inp.touchUI && inp.lastDevice === 'touch'), portrait = touch && H > W;
-    const u = touch ? Math.max(0.75, Math.min(W, H) / 430) : Math.max(1, Math.round(H / 400));
+    if (touch && this.opts.lobby) return null; // phones: the base is small, the round card takes the top
+    const u = hudScale(W, H, touch);
     const M = Math.round(10 * u);
     // box hugs the map's shape inside the max size, so no space is wasted
-    const maxW = (touch ? 130 : 170) * u, maxH = (touch ? 96 : 104) * u;
+    const maxW = Math.min((touch ? 130 : 170) * u, W * 0.24), maxH = Math.min((touch ? 96 : 120) * u, H * 0.3);
     const k = Math.min((maxW - 6 * u) / map.pw, (maxH - 6 * u) / map.ph);
     const bw = Math.max(60 * u, map.pw * k + 6 * u), bh = map.ph * k + 6 * u;
     let bx, by;
     if (portrait) { bx = W - M - bw; by = M + 52 * u; }
     else if (touch) { bx = W / 2 - bw / 2; by = M; }
-    else { bx = W - M - bw; by = M + 56 * u; }
-    this.miniBox = { x: bx, y: by, w: bw, h: bh };
+    else { bx = W - M - bw; by = M + 4; }
+    return { x: bx, y: by, w: bw, h: bh, u };
+  }
+
+  // Minimap: the whole floor, you (white arrow), teammates (blue, red when down), nearby zeds (red).
+  drawMinimap(ctx, W, H) {
+    const map = this.map, box = this.miniLayout(W, H);
+    this.miniBox = box;
+    if (!box) return;
+    const { x: bx, y: by, w: bw, h: bh, u } = box, k = Math.min((bw - 6 * u) / map.pw, (bh - 6 * u) / map.ph);
     if (!map._mini) {
       // small cached copy of the floor (drawn once per floor)
       const s = Math.min(1, 320 / Math.max(map.pw, map.ph)), c = document.createElement('canvas');
@@ -1696,7 +1708,7 @@ export class Game {
   drawHud(ctx, W, H) {
     const pl = this.player, A = this.atlas.combat, inp = this.input;
     const touch = !!(inp && inp.touchUI && inp.lastDevice === 'touch');
-    const u = touch ? Math.max(0.75, Math.min(W, H) / 430) : Math.max(1, Math.round(H / 400));
+    const u = hudScale(W, H, touch);
     ctx.imageSmoothingEnabled = false;
     ctx.textBaseline = 'alphabetic';
     const panel = (x, y, w, h) => { ctx.fillStyle = 'rgba(8,10,14,0.72)'; ctx.fillRect(x, y, w, h); ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); };
@@ -1730,7 +1742,7 @@ export class Game {
     if (this.bleed > 0) st.push('BLEEDING');
     if (this.webbed > 0) st.push('WEBBED');
     const frenzyLabel = this.frenzyT > 0 ? 'FRENZY!' : this.frenzy >= 25 ? 'FRENZY READY' + hint('frenzy') : '';
-    text(st.join('  ') || frenzyLabel || state.toUpperCase(), bx, vy + 58 * u, 13 * u, st.length ? '#ff9b6b' : frenzyLabel ? '#ff8bf0' : '#8fd18f');
+    text(st.join('  ') || frenzyLabel || `${this.opts.cls ? this.opts.cls.toUpperCase() + ' · ' : ''}${state.toUpperCase()}`, bx, vy + 58 * u, 13 * u, st.length ? '#ff9b6b' : frenzyLabel ? '#ff8bf0' : '#8fd18f');
 
     // weapon slots: bottom-right on desktop, top-right (tappable) on touch
     const NS = this.slots.length;
@@ -1785,32 +1797,44 @@ export class Game {
     const clock = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
     const alive = this.mobs.filter((m) => m.alive).length;
     let msgY;
+    const lobby = !!this.opts.lobby;
     if (touch) {
       panel(vx, vy + vh + 4 * u, vw, 20 * u);
-      text(`${clock}   KILLS ${this.kills}   ${this.moneyText()}   ZEDS ${alive}${this.floorCount > 1 ? `   FLOOR ${this.z + 1}/${this.floorCount}` : ''}`, vx + 6 * u, vy + vh + 19 * u, 13 * u, '#ddd');
+      text(lobby ? `THE BASE   ${this.moneyText()}` : `${clock}   KILLS ${this.kills}   ${this.moneyText()}   ZEDS ${alive}${this.floorCount > 1 ? `   FLOOR ${this.z + 1}/${this.floorCount}` : ''}`, vx + 6 * u, vy + vh + 19 * u, 13 * u, '#ddd');
       msgY = portrait ? sy0 + sh + 70 * u : vy + vh + 42 * u;
     } else {
       panel(M, M, 200 * u, 50 * u);
-      text(clock, M + 8, M + 22 * u, 22 * u, '#fff');
-      text(`KILLS ${this.kills}`, M + 8 + 70 * u, M + 22 * u, 15 * u, '#ff9b6b');
       const coin = A.find('coin', ['default'], ['x']);
       if (coin) A.drawCentered(ctx, coin.list[0].f, M + 16, M + 37 * u, 0.5 * u);
       text(this.moneyText(), M + 8 + 18 * u, M + 42 * u, 15 * u, '#ffd36b');
-      text(`INFECTED NEARBY ${alive}${this.floorCount > 1 ? `  ·  FLOOR ${this.z + 1}/${this.floorCount}` : ''}`, M + 8 + 70 * u, M + 42 * u, 12 * u, '#aaa');
-      // class panel
-      const pw = 220 * u, px = W - M - pw;
-      panel(px, M, pw, 50 * u);
-      const icon = A.frames[this.cls.icon];
-      if (icon) A.drawCentered(ctx, icon, px + 22 * u, M + 25 * u, (34 * u) / Math.max(icon[6], icon[7]));
-      text(this.opts.cls.toUpperCase() + (this.legacy ? '  · LEGACY AIM' : ''), px + 44 * u, M + 18 * u, 15 * u, '#fff');
-      text(this.cls.perks.filter((p) => !FRENZY_PERKS.has(p)).join(' · '), px + 44 * u, M + 36 * u, 10 * u, '#9aa');
-      msgY = M + 68 * u + (this.ext && this.ext.objective && this.ext.objective() ? 30 * u : 0);
+      if (lobby) text('THE BASE', M + 8, M + 22 * u, 20 * u, '#fff');
+      else {
+        text(clock, M + 8, M + 22 * u, 22 * u, '#fff');
+        text(`KILLS ${this.kills}`, M + 8 + 70 * u, M + 22 * u, 15 * u, '#ff9b6b');
+        text(`ZEDS NEAR ${alive}${this.floorCount > 1 ? `  ·  FLOOR ${this.z + 1}/${this.floorCount}` : ''}`, M + 8 + 96 * u, M + 42 * u, 12 * u, '#aaa');
+      }
+      msgY = M + 92 * u;
+    }
+
+    const mini = this.miniLayout(W, H);
+    // lobby: the next-round card in the free band at the top (below the weapon panel on portrait)
+    if (this.ext && this.ext.drawCard) {
+      let x0, x1, y;
+      if (portrait) { x0 = M; x1 = W - M; y = sy0 + sh + 60 * u; }
+      else if (touch) { x0 = vx + vw + 8 * u; x1 = sx0 - 8 * u; y = M; }
+      else { x0 = M + 210 * u; x1 = (mini ? mini.x : W - M) - 10 * u; y = M; }
+      const ch = this.ext.drawCard(ctx, (x0 + x1) / 2, y, x1 - x0, u);
+      this.cardBox = { y, h: ch, full: portrait };
+      if (portrait) msgY = Math.max(msgY, y + ch + 18 * u + (this.coop ? (this.coop.players.size + 1) * 14 * u + 12 * u : 0)); // below the party list too
     }
 
     // messages
     for (const m of this.messages) {
       ctx.globalAlpha = Math.min(1, m.t);
-      text(m.text, M + 4, msgY, 14 * u, m.color);
+      ctx.font = `${14 * u}px Bebas, Impact, sans-serif`;
+      const room = (mini && mini.x > W / 2 && msgY < mini.y + mini.h + 50 * u ? mini.x - 8 * u : W - M) - M - 4;
+      const fit = Math.min(1, room / Math.max(1, ctx.measureText(m.text).width)); // long lines shrink to fit beside the minimap
+      text(m.text, M + 4, msgY, 14 * u * fit, m.color);
       msgY += 16 * u;
     }
     ctx.globalAlpha = 1;
@@ -1821,7 +1845,7 @@ export class Game {
     const hints = inp && inp.lastDevice === 'pad'
       ? `${inp.padName || 'Controller'}: L-stick move · R-stick aim · ${inp.hint(this.legacy ? 'fire' : 'fire')} ${this.legacy ? 'auto-fire' : 'fire'} · ${inp.hint('grenade')} grenade · ${inp.hint('reload')} reload · ${inp.hint('interact')} use · ${inp.hint('heal')} heal · ${inp.hint('nextWeapon')} swap · ${inp.hint('pause')} pause`
       : `${['up', 'left', 'down', 'right'].map((a) => inp ? inp.hint(a) : '').join('')} move · ${inp ? inp.hint('fire') : 'LMB'} attack${this.legacy ? ` · ${inp.hint('autofire')} legacy auto-fire` : ''} · ${inp ? inp.hint('grenade') : 'G'} grenade · ${inp ? inp.hint('reload') : 'R'} reload · ${inp ? inp.hint('interact') : 'E'} use · ${inp ? inp.hint('heal') : 'H'} heal · ${inp ? inp.hint('inventory') : 'Tab'} items · ${inp ? inp.hint('shop') : 'B'} upgrades · ${inp ? inp.hint('pause') : 'Esc'} menu`;
-    text(hints, W / 2, H - 6, 11 * u, 'rgba(255,255,255,0.4)', 'center');
+    if (this.opts.lobby || this.time < 20) text(hints, W / 2, H - 6, 11 * u, 'rgba(255,255,255,0.4)', 'center');
 
     // cursor / stick reticle
     if (!inp || inp.aimSource === 'mouse') {

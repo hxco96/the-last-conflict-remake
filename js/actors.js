@@ -15,6 +15,28 @@ export const LOOKS = [
   { name: 'Chris', layers: ['body-army', 'head-nbase3', 'pupil', 'hair-chris'] },
   { name: 'Claire', layers: ['body-nbase0', 'pants-12', 'ushirt-12', 'oshirt-cjacket', 'head-nbase0', 'pupil', 'hair-f-pony'] },
   { name: 'Wesker', layers: ['body-nbase4', 'pants-12', 'oshirt-lab', 'head-nbase4', 'pupil', 'hair-wesker'] },
+  // the rest of the original wardrobe: every hairstyle, skin tone, outfit and hat in the atlas
+  // (append only: co-op sends looks by index)
+  { name: 'Alice', layers: ['body-nbase0', 'pants-f-jill', 'ushirt-dress', 'head-nbase0', 'pupil', 'hair-f-alice'] },
+  { name: 'Tifa', layers: ['body-nbase2', 'pants-12', 'ushirt-f-jill', 'head-nbase2', 'pupil', 'hair-f-tifa'] },
+  { name: 'Billy', layers: ['body-nbase3', 'pants-12', 'ushirt-12', 'head-nbase3', 'pupil', 'hair-billy'] },
+  { name: 'Dally', layers: ['body-nbase1', 'pants-12', 'ushirt-12', 'oshirt-cjacket', 'head-nbase1', 'pupil', 'hair-dally'] },
+  { name: 'Ponyboy', layers: ['body-nbase0', 'pants-12', 'ushirt-12', 'head-nbase0', 'pupil', 'hair-ponyboy'] },
+  { name: 'Hao', layers: ['body-nbase5', 'pants-12', 'oshirt-12', 'head-nbase5', 'pupil', 'hair-hao'] },
+  { name: 'Janus', layers: ['body-nbase4', 'pants-12', 'oshirt-lab', 'head-nbase4', 'pupil', 'hair-janus'] },
+  { name: 'Kurt', layers: ['body-nbase2', 'pants-12', 'oshirt-cjacket', 'head-nbase2', 'pupil', 'hair-kurt'] },
+  { name: 'Trison', layers: ['body-army', 'head-nbase5', 'pupil', 'hair-trison'] },
+  { name: 'Officer', layers: ['body-nbase1', 'pants-12', 'ushirt-m-cop', 'head-nbase1', 'pupil', 'hair-m-2', 'hat-cop'] },
+  { name: 'Deputy', layers: ['body-nbase3', 'pants-f-jill', 'ushirt-f-cop', 'head-nbase3', 'pupil', 'hair-f-pony2', 'hat-cop'] },
+  { name: 'Sarge', layers: ['body-army', 'head-nbase1', 'pupil', 'hair-m-16', 'hat-bandana'] },
+  { name: 'Grunt', layers: ['body-army', 'head-nbase4', 'pupil', 'hair-m-17'] },
+  { name: 'Medic', layers: ['body-nbase5', 'pants-f-jill', 'ushirt-12', 'oshirt-lab', 'head-nbase5', 'pupil', 'hair-f-long'] },
+  { name: 'Rose', layers: ['body-nbase4', 'ushirt-dress', 'head-nbase4', 'pupil', 'hair-f-pigtail'] },
+  { name: 'Nova', layers: ['body-nbase3', 'pants-12', 'ushirt-12', 'oshirt-cjacket', 'head-nbase3', 'pupil', 'hair-f-21'] },
+  { name: 'Skye', layers: ['body-nbase1', 'pants-f-jill', 'ushirt-f-jill', 'head-nbase1', 'pupil', 'hair-f-22'] },
+  { name: 'Marcus', layers: ['body-nbase5', 'pants-12', 'ushirt-12', 'head-nbase5', 'pupil', 'hair-m-18', 'hat-bandana'] },
+  { name: 'Ava', layers: ['body-nbase5', 'pants-12', 'oshirt-12', 'head-nbase5', 'pupil', 'hair-f-pony'] },
+  { name: 'Rex', layers: ['body-nbase0', 'pants-12', 'oshirt-12', 'head-nbase0', 'pupil', 'hair-m-16'] },
 ];
 
 // Draws a stack of layer bases with one animation; returns false when nothing could be drawn.

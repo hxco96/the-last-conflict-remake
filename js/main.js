@@ -10,7 +10,7 @@ import { LOOKS } from './actors.js';
 import { unlockAudio, sfx, initAudio, music, setMuted, applyVolumes, play, suspendAudio } from './sfx.js';
 import { Net } from './net.js';
 import { Coop } from './coop.js';
-import { Input, ACTIONS, TOUCH_LABELS, loadSettings, saveSettings, resetSettings, keyLabel } from './input.js';
+import { Input, ACTIONS, TOUCH_LABELS, DEFAULT_PAD, DEFAULT_PAD_HOLD, loadSettings, saveSettings, resetSettings, keyLabel } from './input.js';
 
 const canvas = document.getElementById('game');
 const overlay = document.getElementById('overlay');
@@ -193,7 +193,8 @@ function controlsHelp() {
   }
   if (input.lastDevice === 'pad') {
     const h = (a) => input.hint(a);
-    return `${input.padName || 'Controller'}: L-stick move (L3 run) · R-stick aim · R2 ${settings.legacy ? 'auto-fire' : 'fire'} · ✕ use/jump (contextual) · ○ jump · □ reload (hold: mine) · △ next throwable (hold: heal) · L1 throw · R1 next weapon · L2 last weapon · D-pad weapon slots · R3 frenzy · Create inventory · Options pause · in menus ✕ select / ○ back`;
+    const b = (id) => input.padButtonLabel((settings.pad[id] || [])[0]), hd = (id) => input.padButtonLabel(((settings.padHold || {})[id] || [])[0]);
+    return `${input.padName || 'Controller'}: L-stick move (${b('run')} run) · R-stick aim · ${b('fire')} ${settings.legacy ? 'auto-fire' : 'fire'} · ${b('context')} use/jump · ${b('jump')} jump · ${b('reload')} reload (hold: mine) · ${b('toggleThrowable')} next throwable (hold: heal) · ${b('grenade')} throw · ${b('nextWeapon')} next weapon · ${b('lastWeapon')} last weapon · D-pad weapon slots · ${b('frenzy')} frenzy · ${b('pause')} pause (hold ${hd('inventory')}: bag) · in menus ${input.padButtonLabel(0)} select / ${input.padButtonLabel(1)} back`;
   }
   const h = (a) => input.hint(a);
   return `${['up', 'left', 'down', 'right'].map(h).join('')} move · ${h('run')} run · mouse aim · ${h('fire')} attack · ${settings.legacy ? h('autofire') + ' legacy auto-fire · ' : ''}${h('grenade')} grenade · ${h('reload')} reload · ${h('interact')} use · ${h('heal')} heal · ${h('inventory')} inventory · ${h('shop')} upgrades · ${h('frenzy')} frenzy · ${h('pause')} pause — all rebindable in Settings`;
@@ -255,7 +256,8 @@ function showMenu() {
     el('div', { class: 'row' },
       el('button', { class: 'pick small', onclick: () => { choice.look = (choice.look + LOOKS.length - 1) % LOOKS.length; savePrefs(); showMenu(); } }, '◀'),
       el('b', { class: 'name' }, look.name),
-      el('button', { class: 'pick small', onclick: () => { choice.look = (choice.look + 1) % LOOKS.length; savePrefs(); showMenu(); } }, '▶')));
+      el('button', { class: 'pick small', onclick: () => { choice.look = (choice.look + 1) % LOOKS.length; savePrefs(); showMenu(); } }, '▶')),
+    el('div', { class: 'looks' }, ...LOOKS.map((l, i) => el('button', { class: i === choice.look ? 'on' : '', title: l.name, onclick: () => { choice.look = i; savePrefs(); showMenu(); } }, lookCanvas(l)))));
   const mode = el('div', { class: 'choices mode' },
     el('button', { class: 'pick' + (!settings.legacy ? ' on' : ''), onclick: () => { settings.legacy = false; saveSettings(settings); showMenu(); } }, el('b', {}, 'Modern aim'), el('small', {}, 'aim with mouse / stick / thumb')),
     el('button', { class: 'pick' + (settings.legacy ? ' on' : ''), onclick: () => { settings.legacy = true; saveSettings(settings); showMenu(); } }, el('b', {}, 'Legacy auto-aim'), el('small', {}, 'auto-shoot the closest visible zed')));
@@ -361,6 +363,7 @@ async function enterLobby(coop = null) {
     if (!session.lobby || !session.lobby.map) throw new Error('the base did not finish loading');
     loading.style.display = 'none';
     canvas.focus();
+    trapBack();
   } catch (err) {
     console.error(err);
     if (coop) coop.close();
@@ -665,15 +668,20 @@ function showSettings(back) {
       ...ACTIONS.map((a) => el('tr', {}, el('td', {}, a.label), el('td', {}, bindButton('key', a.id, 0)), el('td', {}, bindButton('key', a.id, 1)))));
     body = el('div', {}, el('p', { class: 'sub left' }, 'Click a binding, then press a key, mouse button or scroll the wheel. Red bindings are shared with another action. Mouse always aims.'), body);
   } else if (settingsTab === 'pad') {
-    const status = input.pad ? `${input.padName || 'Controller'} connected (${input.pad.id.slice(0, 48)})` : 'No controller detected — connect a PS5 DualSense (USB or Bluetooth) and press any button.';
+    const status = input.pad ? `${input.padName || 'Controller'} connected${input.pad.mapping === 'remapped' ? ' (layout translated for this browser)' : ''} — ${input.pad.id.slice(0, 48)}` : 'No controller detected — connect a PS5 DualSense, PS4 DualShock 4 or Xbox controller (USB or Bluetooth) and press any button.';
+    const style = (id, label) => el('button', { class: 'pick small' + ((settings.padStyle || 'auto') === id ? ' on' : ''), onclick: () => { settings.padStyle = id; saveSettings(settings); input.padName = ''; showSettings(back); } }, el('b', {}, label));
     body = el('div', {},
       el('p', { class: 'sub left' }, status),
-      el('p', { class: 'sub left' }, 'Left stick moves, right stick aims (sticks are fixed). In legacy mode the fire button auto-targets the closest zed. In menus: D-pad / left stick to move, ✕ to select, ○ to go back.'),
+      el('p', { class: 'sub left padtest' }, 'Button test: press any button…'),
+      el('div', { class: 'row' }, el('small', {}, 'Button names: '), style('auto', 'Auto'), style('ps', 'PlayStation'), style('xbox', 'Xbox')),
+      el('p', { class: 'sub left' }, 'Left stick moves, right stick aims (sticks are fixed). In legacy mode the fire button auto-targets the closest zed. In menus: D-pad / left stick to move, ✕ / A to select, ○ / B to go back.'),
+      el('p', { class: 'sub left' }, 'Tablets & phones: the default layout never needs Create/Share, the PS / Xbox button or the touchpad — browsers like Amazon Silk use those for their own menus. Tap Options / Menu to pause, hold it for your bag. If ○ / B makes the browser go back, the game catches it and opens the pause menu instead.'),
       el('div', { class: 'opts' },
         slider('Stick deadzone', 'deadzone', 0.05, 0.45, 0.01, (v) => Math.round(v * 100) + '%'),
-        toggle('Vibration', 'vibration', 'DualSense / gamepad rumble on shots, hits and explosions; phone buzz on hits (Android)'),
+        toggle('Vibration', 'vibration', 'DualSense / DualShock / Xbox rumble on shots, hits and explosions; phone buzz on hits (Android)'),
         toggle('Run at full stick tilt', 'stickRun')),
       el('p', { class: 'sub left' }, `Hold bindings (press ~0.4 s): ${Object.entries(settings.padHold || {}).map(([a, b]) => `${(ACTIONS.find((x) => x.id === a) || { label: a }).label} = hold ${b.map((i) => input.padButtonLabel(i)).join('/')}`).join(' · ')}`),
+      el('button', { class: 'pick small', onclick: () => { settings.pad = JSON.parse(JSON.stringify(DEFAULT_PAD)); settings.padHold = JSON.parse(JSON.stringify(DEFAULT_PAD_HOLD)); saveSettings(settings); showToast('Controller buttons reset'); showSettings(back); } }, el('b', {}, 'Reset controller buttons')),
       el('table', { class: 'binds' }, el('tr', {}, el('th', {}, 'Action'), el('th', {}, 'Button'), el('th', {}, 'Alternate')),
         ...ACTIONS.filter((a) => !['up', 'down', 'left', 'right'].includes(a.id)).map((a) => el('tr', {}, el('td', {}, a.label), el('td', {}, bindButton('pad', a.id, 0)), el('td', {}, bindButton('pad', a.id, 1))))));
   } else {
@@ -739,6 +747,26 @@ function menuNav(dt) {
   if (tap(1) && screen && screen.back) { input.capture = null; play.ui('menuBack'); screen.back(); }
 }
 
+// Live readout for the controller settings tab.
+function padTester() {
+  const p = overlay.querySelector('.padtest');
+  if (!p || !input.pad) return;
+  const down = (input.padButtons || []).map((b, i) => (b ? input.padButtonLabel(i) : null)).filter(Boolean);
+  const ax = input.pad.axes, st = (x, y) => `${Math.round((x || 0) * 100)}, ${Math.round((y || 0) * 100)}`;
+  const t = `Button test: ${down.length ? down.join(' + ') : 'press any button…'}   ·   L-stick ${st(ax[0], ax[1])}   ·   R-stick ${st(ax[2], ax[3])}`;
+  if (p.textContent !== t) p.textContent = t;
+}
+
+// Android / Fire OS (Silk) browsers can turn ○ / B into the browser's Back. Keep a spare history
+// entry while playing, and turn Back into "pause" (or "close this menu") instead of leaving.
+function trapBack() { try { if (!(history.state && history.state.tlcr)) history.pushState({ tlcr: 1 }, ''); } catch { /* sandboxed */ } }
+window.addEventListener('popstate', () => {
+  if (!session) return;
+  trapBack();
+  if (performance.now() - (input.padDownAt[1] || -1e9) < 400) return; // the game already handled ○ / B
+  if (screen && screen.back) { input.capture = null; screen.back(); } else if (!screen && session.active && session.active.map) showPause();
+});
+
 // ---------- main loop ----------
 let frameErrors = 0;
 function frame(t) {
@@ -761,6 +789,7 @@ function frameBody(t) {
     input.capture.done([...input.padTapped][0]);
   } else if (screen) {
     menuNav(dt);
+    if (screen && screen.name === 'settings') padTester();
     if (screen && !input.capture && session && ((screen.name === 'inventory' && input.pressed('inventory'))
       || (['inventory', 'merchant', 'board', 'pause', 'results'].includes(screen.name) && input.pressed('pause') && !input.padTapped.has(1)))) closePanel();
   } else if (session && session.view === 'spectate') {

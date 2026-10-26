@@ -22,21 +22,55 @@ export const DEFAULT_KEYS = {
 // Standard gamepad button indices (DualSense in Chromium/Firefox/Safari use this layout).
 // DualSense layout (playtest audit): one contextual face button, holds for rare actions,
 // D-pad = weapon slots, shoulders = throw / swap. Standard mapping indices.
-export const PAD_VERSION = 2;
+// Defaults only use the 16 core buttons: Create/Share (8), PS/Guide (16) and the touchpad (17)
+// open system or browser menus on tablets (Fire OS Silk, Android), so nothing needs them.
+export const PAD_VERSION = 3;
 export const DEFAULT_PAD = {
   up: [], down: [], left: [], right: [],
   run: [10], fire: [7], autofire: [], grenade: [4],
   context: [0], jump: [1], interact: [], mine: [], reload: [2], heal: [], frenzy: [11],
   slot1: [12], slot2: [15], slot3: [13], slot4: [14], slot5: [], toggleThrowable: [3],
   nextWeapon: [5], prevWeapon: [], lastWeapon: [6],
-  flashlight: [], inventory: [8], shop: [17], pause: [9], mute: [],
+  flashlight: [], inventory: [], shop: [], pause: [9], mute: [],
 };
 // Hold a button ~0.4 s for these (tap keeps the button's normal action).
-export const DEFAULT_PAD_HOLD = { heal: [3], mine: [2] };
+export const DEFAULT_PAD_HOLD = { heal: [3], mine: [2], inventory: [9] };
 
 const PS_NAMES = ['✕ Cross', '○ Circle', '□ Square', '△ Triangle', 'L1', 'R1', 'L2', 'R2', 'Create', 'Options', 'L3', 'R3',
   'D-pad ↑', 'D-pad ↓', 'D-pad ←', 'D-pad →', 'PS', 'Touchpad'];
 const XBOX_NAMES = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'LS', 'RS', 'D-pad ↑', 'D-pad ↓', 'D-pad ←', 'D-pad →', 'Guide', 'Share'];
+
+// Browsers that don't recognise a controller report its raw HID layout (mapping ''): Firefox does
+// this for DualShock 4 / DualSense, some Android / Fire OS browsers for generic pads. Translate
+// the known layouts to the standard one so bindings, menus and labels work the same everywhere.
+const SONY_RAW = [2, 0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 16, 17]; // raw index -> standard index
+const hatDirs = (v) => {
+  // 8-way hat on one axis: -1 = up, then clockwise in steps of 2/7; anything > 1 is centred
+  if (v === undefined || v > 1.05 || v < -1.05) return 0;
+  const i = Math.round((v + 1) * 3.5) % 8;
+  return [1, 1 | 8, 8, 8 | 2, 2, 2 | 4, 4, 4 | 1][i]; // bits: up 1, down 2, left 4, right 8
+};
+export function normalizePad(g) {
+  const btn = (b) => ({ pressed: !!(b && (b.pressed || b.value > 0.5)), value: b ? b.value : 0 });
+  if (g.mapping === 'standard') return g;
+  const id = g.id.toLowerCase(), raw = g.buttons, ax = g.axes;
+  const out = Array.from({ length: 18 }, () => ({ pressed: false, value: 0 }));
+  let axes = [ax[0] || 0, ax[1] || 0, ax[2] || 0, ax[3] || 0], hat = 0;
+  if (/054c|dualsense|dualshock|wireless controller|playstation/.test(id) && raw.length >= 13) {
+    raw.forEach((b, i) => { if (SONY_RAW[i] !== undefined) out[SONY_RAW[i]] = btn(b); });
+    axes = [ax[0] || 0, ax[1] || 0, ax[2] || 0, ax[5] || 0];
+    if (raw.length >= 18) for (let i = 14; i < 18; i++) out[i - 2] = btn(raw[i]); // some builds put the D-pad on 14-17
+    hat = hatDirs(ax[9]);
+  } else {
+    raw.forEach((b, i) => { if (i < 18) out[i] = btn(b); });
+    // D-pad reported as a hat axis (9) or as an x/y axis pair (6, 7)
+    if (ax.length >= 10) hat = hatDirs(ax[9]);
+    else if (ax.length >= 8 && raw.length < 16) hat = (ax[7] < -0.5 ? 1 : 0) | (ax[7] > 0.5 ? 2 : 0) | (ax[6] < -0.5 ? 4 : 0) | (ax[6] > 0.5 ? 8 : 0);
+  }
+  if (hat) [[1, 12], [2, 13], [4, 14], [8, 15]].forEach(([bit, i]) => { if (hat & bit) out[i] = { pressed: true, value: 1 }; });
+  return { id: g.id, index: g.index, connected: g.connected, mapping: 'remapped', buttons: out, axes,
+    vibrationActuator: g.vibrationActuator, hapticActuators: g.hapticActuators };
+}
 
 export const DEFAULT_SETTINGS = {
   legacy: false,          // legacy shooting: auto-target the closest visible zed
@@ -44,6 +78,7 @@ export const DEFAULT_SETTINGS = {
   pauseOnHide: true,      // pause (solo) when the tab/app is hidden or loses focus
   gore: true,             // dismemberment, gibs and blood sprays
   minimap: true,          // map overlay with teammates highlighted
+  padStyle: 'auto',       // button names: auto-detect, 'ps' or 'xbox'
   showHitChance: true,
   weather: true,
   vibration: true,
@@ -121,13 +156,18 @@ export class Input {
     this.touch = { pointers: new Map(), move: null, aim: null, buttons: new Set(), vis: new Set(), layout: null, menuOpen: false };
     this.padDownAt = []; this.padHoldDone = []; this.padRelease = new Set(); this.padHoldTapped = new Set();
     this.capture = null;         // rebinding callback
+    this.padActiveAt = -1e9;     // last controller input (ms)
     this.onDevice = () => {};
     this.bind();
   }
 
   bind() {
     const c = this.canvas;
+    // Tablet / TV browsers turn some controller buttons into browser keys (Back, Menu, media):
+    // swallow them so they can't open browser menus or leave the page mid-game.
+    const BROWSER_KEYS = /^(GoBack|BrowserBack|BrowserForward|BrowserHome|BrowserSearch|BrowserFavorites|BrowserRefresh|ContextMenu|Props|Select|AppSwitch|Media\w*|Gamepad\w*|Button\w*)$/;
     window.addEventListener('keydown', (e) => {
+      if (BROWSER_KEYS.test(e.key) || BROWSER_KEYS.test(e.code)) { e.preventDefault(); e.stopPropagation(); return; }
       if (this.capture && this.capture.kind === 'key') {
         e.preventDefault();
         this.capture.done(e.code === 'Escape' ? null : e.code === 'Backspace' || e.code === 'Delete' ? '' : e.code);
@@ -148,7 +188,9 @@ export class Input {
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => { this.keys.clear(); this.touch.pointers.clear(); this.touch.move = this.touch.aim = null; this.touch.buttons.clear(); });
-    c.addEventListener('mousemove', (e) => { this.mouse.x = this.px(e); this.mouse.y = this.py(e); this.setDevice('kbm'); });
+    // a DualShock / DualSense touchpad drives the mouse pointer on Android: don't let it flip the HUD
+    const padBusy = () => performance.now() - this.padActiveAt < 1500;
+    c.addEventListener('mousemove', (e) => { this.mouse.x = this.px(e); this.mouse.y = this.py(e); if (!padBusy()) this.setDevice('kbm'); });
     c.addEventListener('mousedown', (e) => {
       const code = 'Mouse' + e.button;
       if (this.capture && this.capture.kind === 'key') { this.capture.done(code); e.preventDefault(); return; }
@@ -156,7 +198,8 @@ export class Input {
     });
     window.addEventListener('mouseup', (e) => this.keys.delete('Mouse' + e.button));
     c.addEventListener('wheel', (e) => { this.tapped.add(e.deltaY > 0 ? 'WheelDown' : 'WheelUp'); e.preventDefault(); }, { passive: false });
-    c.addEventListener('contextmenu', (e) => e.preventDefault());
+    window.addEventListener('contextmenu', (e) => { if (!(e.target && e.target.tagName === 'INPUT')) e.preventDefault(); });
+    window.addEventListener('auxclick', (e) => e.preventDefault());
 
     // touch (pointer events so multi-touch works everywhere)
     c.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') { e.preventDefault(); this.touchDown(e); } });
@@ -175,8 +218,9 @@ export class Input {
   padConnected(gp) {
     const id = gp.id.toLowerCase();
     const sony = /dualsense|dualshock|054c|playstation|wireless controller/.test(id);
-    this.padLabels = sony || !/xbox|xinput|045e/.test(id) ? PS_NAMES : XBOX_NAMES;
-    this.padName = /dualsense|0ce6|0df2/.test(id) ? 'DualSense' : sony ? 'PlayStation controller' : 'Controller';
+    const style = this.settings.padStyle;
+    this.padLabels = style === 'ps' ? PS_NAMES : style === 'xbox' ? XBOX_NAMES : sony || !/xbox|xinput|045e|microsoft/.test(id) ? PS_NAMES : XBOX_NAMES;
+    this.padName = /dualsense|0ce6|0df2/.test(id) ? 'DualSense' : /dualshock|05c4|09cc/.test(id) ? 'DualShock 4' : sony ? 'PlayStation controller' : /xbox|xinput|045e|microsoft/.test(id) ? 'Xbox controller' : 'Controller';
     this.onDevice('connected', this.padName);
   }
 
@@ -293,7 +337,7 @@ export class Input {
     const S = this.settings, dz = S.deadzone;
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     this.pad = null;
-    for (const gp of pads) if (gp && gp.connected) { this.pad = gp; break; }
+    for (const gp of pads) if (gp && gp.connected) { this.pad = normalizePad(gp); break; }
     const pb = [];
     let padMove = { x: 0, y: 0, mag: 0 }, padAim = null;
     if (this.pad) {
@@ -303,11 +347,13 @@ export class Input {
       for (let i = 0; i < g.buttons.length; i++) {
         const b = g.buttons[i];
         pb[i] = b.pressed || b.value > 0.35;
+        if (pb[i]) this.padActiveAt = now;
         if (pb[i] && !this.padPrev[i]) { this.padTapped.add(i); this.setDevice('pad'); this.padDownAt[i] = now; this.padHoldDone[i] = false; }
         if (pb[i] && holdBtns.has(i) && !this.padHoldDone[i] && now - this.padDownAt[i] >= 400) { this.padHoldDone[i] = true; this.padHoldTapped.add(i); }
         if (!pb[i] && this.padPrev[i] && holdBtns.has(i) && !this.padHoldDone[i]) this.padRelease.add(i);
       }
       const ax = g.axes[0] || 0, ay = g.axes[1] || 0, m = Math.hypot(ax, ay);
+      if (m > dz || Math.hypot(g.axes[2] || 0, g.axes[3] || 0) > dz) this.padActiveAt = now;
       if (m > dz) { const k = Math.min(1, (m - dz) / (1 - dz)); padMove = { x: (ax / m) * k, y: (ay / m) * k, mag: k }; this.setDevice('pad'); }
       const rx = g.axes[2] || 0, ry = g.axes[3] || 0, rm = Math.hypot(rx, ry);
       if (rm > dz + 0.05) { padAim = { a: Math.atan2(ry, rx), mag: Math.min(1, rm) }; this.setDevice('pad'); }
