@@ -662,6 +662,8 @@ function showSettings(back) {
         volume('Master volume', 'volMaster', 'master', 0.9),
         volume('Sound effects', 'volSfx', 'sfxVol', 0.9),
         volume('Music', 'volMusic', 'musicVol', 0.45)),
+      el('div', { class: 'choices mode' }, ...[['tethered', 'Sake — Tethered mix', 'slowed, dark strings and a creeping pulse'], ['original', 'Sake — original', 'the track as it was']].map(([id, name, desc]) =>
+        el('button', { class: 'pick' + ((settings.lobbyMusic || 'tethered') === id ? ' on' : ''), onclick: () => { settings.lobbyMusic = id; saveSettings(settings); if (session && session.view === 'lobby') music(session.lobbyTrack(), true); showSettings(back); } }, el('b', {}, name), el('small', {}, 'Base music: ' + desc)))),
       el('button', { class: 'pick small danger', onclick: () => { if (confirm('Reset all controls and settings to defaults?')) { resetSettings(settings); showSettings(back); } } }, el('b', {}, 'Reset everything to defaults')));
   } else if (settingsTab === 'kbm') {
     body = el('table', { class: 'binds' }, el('tr', {}, el('th', {}, 'Action'), el('th', {}, 'Primary'), el('th', {}, 'Secondary')),

@@ -55,7 +55,7 @@ export class Session {
     this.lobby.onArmory = (c) => this.ui.armory(c);
     this.lobby.onDeploy = () => this.deploy();
     this.lobby.msg('Welcome to the base. Gear up at the ARMORY tables, upgrade with the merchant, vote at the mission board.', '#9cd4ff');
-    music('Sake');
+    music(this.lobbyTrack());
     if (this.coop) {
       this.coop.session = this;
       if (this.coop.client) this.coop.hello();
@@ -190,7 +190,7 @@ export class Session {
     const lb = this.lobby;
     lb.ammo.slots.length = 0; lb.throwables.counts.clear(); lb.throwables.sel = null; lb.items.clear();
     lb.applyLoadout(lb.classLoadout());
-    music('Sake');
+    music(this.lobbyTrack());
     this.ui.results({ record: m.record, result, deployed: true, pay: m.lastPay, kills: m.kills, alive: m.aliveTime || 0, map: m.opts.map.name, mode: m.opts.mode, difficulty: m.opts.difficulty, wonText: null, coop: true });
   }
 
@@ -299,11 +299,14 @@ export class Session {
     const lb = this.lobby;
     lb.ammo.slots.length = 0; lb.throwables.counts.clear(); lb.throwables.sel = null; lb.items.clear();
     lb.applyLoadout(lb.classLoadout());
-    music('Sake');
+    music(this.lobbyTrack());
     if (quiet) return;
     if (summary.deployed) this.ui.results(summary);
     else if (result === 'abandoned') lb.msg('The round ended — nobody deployed.', '#ffb0b0');
   }
+
+  // Base music: the Tethered mix of Sake by default, the original if picked in Settings.
+  lobbyTrack() { return this.input && this.input.settings.lobbyMusic === 'original' ? 'Sake' : 'Sake (Tethered)'; }
 
   // What the base's next-round card shows (see LobbyExt.drawCard).
   lobbyInfo() {
