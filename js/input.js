@@ -78,6 +78,7 @@ export const DEFAULT_SETTINGS = {
   pauseOnHide: true,      // pause (solo) when the tab/app is hidden or loses focus
   gore: true,             // dismemberment, gibs and blood sprays
   minimap: true,          // map overlay with teammates highlighted
+  lobbyMusic: 'tethered', // base music: 'tethered' (suspense mix of Sake) or 'original'
   padStyle: 'auto',       // button names: auto-detect, 'ps' or 'xbox'
   showHitChance: true,
   weather: true,

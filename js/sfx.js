@@ -145,7 +145,7 @@ export function music(name, force = false) {
   if (!force && musicName === name && musicEl && !musicEl.paused) return;
   const pickNext = () => {
     if (name !== 'playlist') return byName.get(name);
-    if (!musicList.length) musicList = index.music.filter((m) => !/save room|secure place|room\(re3\)|boss|^sake$/i.test(m.name)).sort(() => Math.random() - 0.5);
+    if (!musicList.length) musicList = index.music.filter((m) => !/save room|secure place|room\(re3\)|boss|^sake\b/i.test(m.name)).sort(() => Math.random() - 0.5);
     return musicList.shift();
   };
   const e = pickNext();
