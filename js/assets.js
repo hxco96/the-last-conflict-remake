@@ -112,6 +112,9 @@ export async function loadAssets(onProgress = () => {}) {
     loadJson('assets/maps/index.json').then(tick),
     loadJson('assets/data/barks.json').then(tick),
   ]);
+  // Mech robot atlases (one image each)
+  const robotNames = await loadJson('assets/img/robots/index.json').catch(() => []);
+  const robots = await Promise.all(robotNames.map(async (n) => new Atlas(await loadJson(`assets/img/robots/${n}.json`), await loadImage(`assets/img/robots/${n}.png`))));
   try {
     const font = new FontFace('Bebas', 'url(assets/img/BebasNeue-Regular.ttf)');
     document.fonts.add(await font.load());
@@ -119,6 +122,7 @@ export async function loadAssets(onProgress = () => {}) {
 
   return {
     atlas: Object.fromEntries(atlases),
+    robots,
     tilePages: [tilePage0, tilePage1],
     title, tables, tilesets, mapIndex, barks,
     loadMap: (file) => loadJson('assets/maps/' + file),

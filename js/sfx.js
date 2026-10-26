@@ -109,6 +109,21 @@ export function sample(names, opts = {}) {
   return true;
 }
 
+// Looping ambience (weather, helicopter rotor). Returns null until the sample has loaded.
+export function loop(name, vol = 0.3) {
+  if (!ensure() || !index) return null;
+  const buf = buffers.get(name);
+  if (!(buf instanceof AudioBuffer)) { load(name); return null; }
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  src.loop = true;
+  const g = ac.createGain();
+  g.gain.value = vol;
+  src.connect(g).connect(sfxBus);
+  src.start();
+  return { gain: g, stop() { try { src.stop(); } catch { /* already stopped */ } } };
+}
+
 // ---------- synth fallback ----------
 function burst({ dur = 0.1, freq = 1200, q = 0.8, vol = 0.4, type = 'lowpass' }) {
   if (sfx.muted || !ensure()) return;

@@ -20,7 +20,8 @@ export class GameMap {
     return Math.max(1, json.layers.filter((l) => /^floor_\d+$/.test(l.name)).length);
   }
 
-  constructor(json, assets, z = 0) {
+  constructor(json, assets, z = 0, opts = {}) {
+    this.clean = !!opts.clean; // lobby: skip gore / trash / damage decorations
     this.json = json;
     this.z = z;
     this.floors = GameMap.floorCount(json);
@@ -34,6 +35,7 @@ export class GameMap {
       .sort((a, b) => a.first - b.first);
     const n = this.w * this.h;
     this.solid = new Uint8Array(n);     // static: blocks movement
+    this.breach = new Uint8Array(n);    // windows: infected climb through, players can't
     this.low = new Uint8Array(n);       // static but low enough to jump over (fences)
     this.shotBlock = new Uint8Array(n); // static: blocks bullets
     this.dyn = new Array(n).fill(null); // door / barricade occupying a cell
@@ -142,6 +144,7 @@ export class GameMap {
         const cx = i % this.w, cy = Math.floor(i / this.w);
         const dx = cx * T + (+r.meta.pixel_offset_x || 0);
         const dy = (cy + 1) * T - r.ts.th;
+        if (this.clean && /^(deco_gore|deco_trash|deco_cracks|police_tape|hazards_|1destroyed)/.test(r.set)) continue;
         if (!isTop && this.dynamicTile(r, cx, cy)) continue;
         this.drawTile(ctx, r, dx, dy);
         if (!isTop) this.applyStatic(r, cx, cy);
@@ -158,6 +161,7 @@ export class GameMap {
     const type = r.meta.type || '';
     const i = this.idx(cx, cy);
     if (/^Fence_/.test(type)) this.low[i] = 1;
+    if (type === 'Window') this.breach[i] = 1;
     if (SOLID_TYPES.has(type) || SOLID_SETS.has(r.set) || /^Fence_/.test(type)) {
       this.solid[i] = 1;
       if (!SHOT_PASS_TYPES.has(type) && !/^Fence_/.test(type)) this.shotBlock[i] = 1;
@@ -213,6 +217,7 @@ export class GameMap {
     if (!o.gid) return;
     const r = this.resolve(o.gid);
     if (!r) return;
+    if (this.clean && /^(deco_gore|deco_trash|deco_cracks|police_tape|hazards_|1destroyed)/.test(r.set)) return;
     const w = o.width || r.ts.tw, h = o.height || r.ts.th;
     const topLeft = r.ts.align === 'topleft';
     const x = o.x, y = topLeft ? o.y : o.y - h;
@@ -229,6 +234,7 @@ export class GameMap {
     }
     this.drawTile(ctx, r, x, y, w, h);
     if (tType === 'Candle' || tType === 'LightBulb' || tType === 'StreetLight') this.addLight(tType, x + w / 2, y + h / 2);
+    if (tType === 'Window' && this.inBounds(cx, cy)) this.breach[this.idx(cx, cy)] = 1;
     if (SOLID_TYPES.has(tType) && this.inBounds(cx, cy)) {
       this.solid[this.idx(cx, cy)] = 1;
       if (!SHOT_PASS_TYPES.has(tType)) this.shotBlock[this.idx(cx, cy)] = 1;
@@ -237,10 +243,11 @@ export class GameMap {
 
   // ---- runtime queries ----
   // airborne: fences and barricades (incl. boarded windows) can be jumped over
-  blocking(cx, cy, airborne = false) {
+  blocking(cx, cy, airborne = false, mob = false) {
     if (!this.inBounds(cx, cy)) return true;
     const i = this.idx(cx, cy);
     const d = this.dyn[i];
+    if (mob && this.breach[i] && !d) return false;
     if (airborne && (this.low[i] || (d && d.kind === 'cade'))) return false;
     if (this.solid[i]) return true;
     if (!d) return false;
@@ -255,10 +262,10 @@ export class GameMap {
     return !!(d && d.kind === 'door' && !d.open);
   }
 
-  boxHits(x, y, hw, hh, airborne = false) {
+  boxHits(x, y, hw, hh, airborne = false, mob = false) {
     const x0 = Math.floor((x - hw) / T), x1 = Math.floor((x + hw) / T);
     const y0 = Math.floor((y - hh) / T), y1 = Math.floor((y + hh) / T);
-    for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) if (this.blocking(cx, cy, airborne)) return true;
+    for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) if (this.blocking(cx, cy, airborne, mob)) return true;
     return false;
   }
 

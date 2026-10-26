@@ -3,31 +3,36 @@
 
 export const ACTIONS = [
   ['up', 'Move up'], ['down', 'Move down'], ['left', 'Move left'], ['right', 'Move right'],
-  ['run', 'Run'], ['jump', 'Jump'], ['fire', 'Attack / fire'], ['autofire', 'Legacy auto-fire'], ['grenade', 'Throw grenade'],
+  ['run', 'Run'], ['jump', 'Jump'], ['context', 'Use or jump (contextual)'], ['mine', 'Place mine'], ['fire', 'Attack / fire'], ['autofire', 'Legacy auto-fire'], ['grenade', 'Throw grenade'],
   ['reload', 'Reload'], ['interact', 'Use / pick up'], ['heal', 'Quick heal'], ['frenzy', 'Frenzy'],
-  ['slot1', 'Melee slot'], ['slot2', 'Sidearm slot'], ['slot3', 'Primary slot'], ['slot4', 'Throwable slot'],
+  ['slot1', 'Weapon slot 1'], ['slot2', 'Weapon slot 2'], ['slot3', 'Weapon slot 3'], ['slot4', 'Weapon slot 4'], ['slot5', 'Weapon slot 5'], ['toggleThrowable', 'Toggle throwable'],
   ['nextWeapon', 'Next weapon'], ['prevWeapon', 'Previous weapon'], ['lastWeapon', 'Last weapon'],
   ['flashlight', 'Flashlight'], ['inventory', 'Inventory'], ['shop', 'Upgrades'], ['pause', 'Pause / back'], ['mute', 'Mute'],
 ].map(([id, label]) => ({ id, label }));
 
 export const DEFAULT_KEYS = {
   up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
-  run: ['ShiftLeft', 'ShiftRight'], jump: ['Space'], fire: ['Mouse0'], autofire: ['KeyF'], grenade: ['Mouse2', 'KeyG'],
+  run: ['ShiftLeft', 'ShiftRight'], jump: ['Space'], mine: ['KeyN'], fire: ['Mouse0'], autofire: ['KeyF'], grenade: ['Mouse2', 'KeyG'],
   reload: ['KeyR'], interact: ['KeyE'], heal: ['KeyH'], frenzy: ['KeyV'],
-  slot1: ['Digit1'], slot2: ['Digit2'], slot3: ['Digit3'], slot4: ['Digit4'],
+  slot1: ['Digit1'], slot2: ['Digit2'], slot3: ['Digit3'], slot4: ['Digit4'], slot5: ['Digit5'], toggleThrowable: ['KeyT'],
   nextWeapon: ['WheelDown'], prevWeapon: ['WheelUp'], lastWeapon: ['KeyQ'],
   flashlight: ['KeyL'], inventory: ['Tab', 'KeyI'], shop: ['KeyB'], pause: ['Escape', 'KeyP'], mute: ['KeyM'],
 };
 
 // Standard gamepad button indices (DualSense in Chromium/Firefox/Safari use this layout).
+// DualSense layout (playtest audit): one contextual face button, holds for rare actions,
+// D-pad = weapon slots, shoulders = throw / swap. Standard mapping indices.
+export const PAD_VERSION = 2;
 export const DEFAULT_PAD = {
   up: [], down: [], left: [], right: [],
-  run: [10, 6], fire: [7], autofire: [], grenade: [4],
-  jump: [0], reload: [2], interact: [3], heal: [1], frenzy: [11],
-  slot1: [], slot2: [], slot3: [], slot4: [],
-  nextWeapon: [5, 15], prevWeapon: [14], lastWeapon: [13],
-  flashlight: [12], inventory: [8], shop: [17], pause: [9], mute: [],
+  run: [10], fire: [7], autofire: [], grenade: [4],
+  context: [0], jump: [1], interact: [], mine: [], reload: [2], heal: [], frenzy: [11],
+  slot1: [12], slot2: [15], slot3: [13], slot4: [14], slot5: [], toggleThrowable: [3],
+  nextWeapon: [5], prevWeapon: [], lastWeapon: [6],
+  flashlight: [], inventory: [8], shop: [17], pause: [9], mute: [],
 };
+// Hold a button ~0.4 s for these (tap keeps the button's normal action).
+export const DEFAULT_PAD_HOLD = { heal: [3], mine: [2] };
 
 const PS_NAMES = ['✕ Cross', '○ Circle', '□ Square', '△ Triangle', 'L1', 'R1', 'L2', 'R2', 'Create', 'Options', 'L3', 'R3',
   'D-pad ↑', 'D-pad ↓', 'D-pad ←', 'D-pad →', 'PS', 'Touchpad'];
@@ -36,6 +41,7 @@ const XBOX_NAMES = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 
 export const DEFAULT_SETTINGS = {
   legacy: false,          // legacy shooting: auto-target the closest visible zed
   showHitChance: true,
+  weather: true,
   vibration: true,
   deadzone: 0.2,
   stickRun: true,         // full stick tilt runs (pad + touch)
@@ -44,11 +50,12 @@ export const DEFAULT_SETTINGS = {
   leftHanded: false,
   touchButtons: ['reload', 'grenade', 'interact', 'heal', 'nextWeapon', 'jump'],
   keys: DEFAULT_KEYS,
+  padHold: DEFAULT_PAD_HOLD,
   pad: DEFAULT_PAD,
 };
 
 export const TOUCH_LABELS = { reload: 'R', grenade: 'NADE', interact: 'USE', heal: 'HEAL', nextWeapon: 'SWAP', prevWeapon: 'PREV',
-  lastWeapon: 'LAST', flashlight: 'LIGHT', frenzy: 'FRENZY', run: 'RUN', inventory: 'BAG', shop: 'SHOP', autofire: 'AUTO', jump: 'JUMP' };
+  lastWeapon: 'LAST', flashlight: 'LIGHT', frenzy: 'FRENZY', run: 'RUN', inventory: 'BAG', shop: 'SHOP', autofire: 'AUTO', jump: 'JUMP', mine: 'MINE' };
 
 const STORE = 'tlcr-settings-v1';
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -58,7 +65,10 @@ export function loadSettings() {
   try { saved = JSON.parse(localStorage.getItem(STORE) || '{}'); } catch { /* storage unavailable */ }
   const s = { ...clone(DEFAULT_SETTINGS), ...saved };
   s.keys = { ...clone(DEFAULT_KEYS), ...(saved.keys || {}) };
-  s.pad = { ...clone(DEFAULT_PAD), ...(saved.pad || {}) };
+  // older saves predate the contextual DualSense layout: take the new pad defaults
+  s.pad = saved.padVersion === PAD_VERSION ? { ...clone(DEFAULT_PAD), ...(saved.pad || {}) } : clone(DEFAULT_PAD);
+  s.padHold = saved.padVersion === PAD_VERSION && saved.padHold ? saved.padHold : clone(DEFAULT_PAD_HOLD);
+  s.padVersion = PAD_VERSION;
   if (!s.touchButtons.includes('jump')) s.touchButtons = [...s.touchButtons.slice(0, 5), 'jump'];
   return s;
 }
@@ -103,7 +113,8 @@ export class Input {
     this.aimMag = 0;             // stick/touch aim strength (0..1)
     this.move = { x: 0, y: 0, mag: 0 };
     this.touchUI = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
-    this.touch = { pointers: new Map(), move: null, aim: null, buttons: new Set(), layout: null };
+    this.touch = { pointers: new Map(), move: null, aim: null, buttons: new Set(), vis: new Set(), layout: null, menuOpen: false };
+    this.padDownAt = []; this.padHoldDone = []; this.padRelease = new Set(); this.padHoldTapped = new Set();
     this.capture = null;         // rebinding callback
     this.onDevice = () => {};
     this.bind();
@@ -168,19 +179,29 @@ export class Input {
   }
 
   // ---- touch ----
+  // Buttons with a `hold` action fire their tap action on release (<450 ms) and the hold action
+  // once the finger stays down; "menu" toggles the secondary-action fan.
   touchDown(e) {
     this.setDevice('touch');
     this.touchUI = true;
     const L = this.touch.layout;
     if (!L) return;
-    const p = { id: e.pointerId, x: e.clientX, y: e.clientY, role: null };
+    const p = { id: e.pointerId, x: e.clientX, y: e.clientY, role: null, t: performance.now() };
     for (const b of L.buttons) {
-      if (Math.hypot(p.x - b.x, p.y - b.y) <= b.r * 1.15) { p.role = 'btn:' + b.id; this.touch.buttons.add(b.id); this.tapped.add('touch:' + b.id); break; }
+      if (Math.hypot(p.x - b.x, p.y - b.y) > b.r + 6 * L.u) continue;
+      p.role = 'btn:' + b.id;
+      p.btn = b;
+      if (b.id === 'menu') { this.touch.menuOpen = !this.touch.menuOpen; break; }
+      this.touch.vis.add(b.id);
+      if (!b.hold) { this.touch.buttons.add(b.id); this.tapped.add('touch:' + b.id); }
+      if (b.menuItem) this.touch.menuOpen = false;
+      break;
     }
     if (!p.role) {
+      this.touch.menuOpen = false;
       const inMove = L.leftHanded ? p.x > L.w * 0.5 : p.x < L.w * 0.5;
-      if (inMove && !this.touch.move && p.y > L.h * 0.3) { p.role = 'move'; this.touch.move = { ox: p.x, oy: p.y, x: p.x, y: p.y, id: p.id }; }
-      else if (!inMove && !this.touch.aim && !L.legacy && p.y > L.h * 0.3) { p.role = 'aim'; this.touch.aim = { ox: p.x, oy: p.y, x: p.x, y: p.y, id: p.id }; }
+      if (inMove && !this.touch.move && p.y > L.h * 0.25) { p.role = 'move'; this.touch.move = { ox: p.x, oy: p.y, x: p.x, y: p.y, id: p.id }; }
+      else if (!inMove && !this.touch.aim && !L.legacy && p.y > L.h * 0.25) { p.role = 'aim'; this.touch.aim = { ox: p.x, oy: p.y, x: p.x, y: p.y, id: p.id }; }
     }
     this.touch.pointers.set(p.id, p);
   }
@@ -201,37 +222,47 @@ export class Input {
   touchUp(e) {
     const p = this.touch.pointers.get(e.pointerId);
     if (!p) return;
-    if (p.role && p.role.startsWith('btn:')) this.touch.buttons.delete(p.role.slice(4));
+    if (p.role && p.role.startsWith('btn:')) {
+      const id = p.role.slice(4);
+      this.touch.buttons.delete(id);
+      this.touch.vis.delete(id);
+      if (p.btn && p.btn.hold && !p.holdFired) this.tapped.add('touch:' + id);
+    }
     if (p.role === 'move') this.touch.move = null;
     if (p.role === 'aim') this.touch.aim = null;
     this.touch.pointers.delete(e.pointerId);
   }
 
-  // Touch layout in screen pixels; also used to draw the controls.
+  // Touch layout in screen pixels (also used to draw). Few, large primary controls on the right;
+  // contextual buttons only when they apply; everything else behind the "≡" menu.
   layoutTouch(W, H, legacy, extra = {}) {
     const s = this.settings.touchScale || 1, lh = !!this.settings.leftHanded;
-    const u = Math.min(W, H) / 400 * s;
-    const R = 56 * u, br = 26 * u;
+    const u = Math.max(0.9, Math.min(1.4, Math.min(W, H) / 400)) * s;
+    const m = Math.max(12 * u, 12);
+    const portrait = H > W;
+    const R = (portrait ? 50 : 60) * u;
     const mx = (x) => (lh ? W - x : x);
     const buttons = [];
-    const add = (id, label, x, y, r = br) => buttons.push({ id, label, x: mx(x), y, r });
-    // right cluster
-    // right side: aim stick / FIRE at (W-150, H-85); buttons in an edge column and a row above it
-    const ax = W - 150 * u, ay = H - 85 * u;
-    if (legacy) add('fire', 'FIRE', ax, ay, 46 * u);
-    const tb = this.settings.touchButtons || DEFAULT_SETTINGS.touchButtons;
-    const spots = [[W - 34 * u, H - 118 * u, br], [W - 92 * u, H - 205 * u, br], [W - 150 * u, H - 205 * u, br],
-      [W - 34 * u, H - 176 * u, br * 0.9], [W - 34 * u, H - 60 * u, br * 0.9], [W - 92 * u, H - 30 * u, br * 0.9]];
-    tb.forEach((id, i) => { if (id && spots[i]) add(id, TOUCH_LABELS[id] || id.toUpperCase(), ...spots[i]); });
-    if (extra.frenzyReady && !tb.includes('frenzy')) add('frenzy', 'FRENZY', W - 208 * u, H - 205 * u, br * 0.9);
-    // top bar
-    const ty = 26 * u, tr = 17 * u;
-    add('pause', 'II', W / 2 - 46 * u, ty, tr);
-    add('inventory', 'BAG', W / 2, ty, tr);
-    add('shop', 'SHOP', W / 2 + 46 * u, ty, tr);
-    add('flashlight', 'LIGHT', W / 2 + 92 * u, ty, tr);
-    this.touch.layout = { w: W, h: H, u, stickR: R, buttons, legacy, leftHanded: lh,
-      moveHome: { x: mx(100 * u), y: H - 100 * u }, aimHome: { x: mx(W - 150 * u), y: H - 85 * u } };
+    const add = (id, label, x, y, r, more = {}) => buttons.push({ id, label, x: mx(x), y, r, ...more });
+    const move = { x: m + R + 18 * u, y: H - m - R - 30 * u };
+    const A = { x: Math.max(W - m - 150 * u, move.x + 2 * R + 40 * u), y: H - m - (portrait ? 95 : 95) * u };
+    if (legacy) add('fire', 'FIRE', A.x, A.y, 46 * u);
+    add('jump', 'JUMP', W - m - 40 * u, H - m - 40 * u, 34 * u);
+    if (extra.canReload) add('reload', 'R', W - m - 40 * u, H - m - 130 * u, 30 * u);
+    add('grenade', extra.throwLabel || 'NADE', A.x - 30 * u, A.y - 112 * u, 30 * u, { hold: 'toggleThrowable', sub: extra.throwCount });
+    if (extra.useLabel) add('interact', extra.useLabel, A.x + 72 * u, A.y - 112 * u, 30 * u, { accent: 'use' });
+    if (extra.canHeal) add('heal', 'HEAL', m + 40 * u, move.y - R - 70 * u, 28 * u, { accent: extra.lowHp ? 'pulse' : null });
+    if (extra.frenzyReady) add('frenzy', 'FRENZY', W - m - 40 * u, H - m - 222 * u, 26 * u, { accent: 'frenzy' });
+    // secondary actions behind the menu button (top-right)
+    const mb = { x: W - m - 22 * u, y: m + 22 * u + (extra.topOffset || 0) };
+    add('menu', this.touch.menuOpen ? '×' : '≡', mb.x, mb.y, 22 * u);
+    if (this.touch.menuOpen) {
+      const items = [['pause', 'PAUSE'], ['inventory', 'BAG'], ['toggleThrowable', 'NEXT NADE'], ['mine', 'MINE'], ['flashlight', 'LIGHT']];
+      if (extra.inLobby) items.splice(2, 2);
+      items.forEach(([id, label], i) => add(id, label, mb.x, mb.y + (i + 1) * 54 * u, 24 * u, { menuItem: true }));
+    }
+    this.touch.layout = { w: W, h: H, u, m, stickR: R, buttons, legacy, leftHanded: lh, portrait,
+      moveHome: { x: mx(move.x), y: move.y }, aimHome: { x: mx(A.x), y: A.y } };
     return this.touch.layout;
   }
 
@@ -256,10 +287,13 @@ export class Input {
     if (this.pad) {
       if (!this.padName) this.padConnected(this.pad);
       const g = this.pad;
+      const now = performance.now(), holdBtns = this.holdButtons();
       for (let i = 0; i < g.buttons.length; i++) {
         const b = g.buttons[i];
         pb[i] = b.pressed || b.value > 0.35;
-        if (pb[i] && !this.padPrev[i]) { this.padTapped.add(i); this.setDevice('pad'); }
+        if (pb[i] && !this.padPrev[i]) { this.padTapped.add(i); this.setDevice('pad'); this.padDownAt[i] = now; this.padHoldDone[i] = false; }
+        if (pb[i] && holdBtns.has(i) && !this.padHoldDone[i] && now - this.padDownAt[i] >= 400) { this.padHoldDone[i] = true; this.padHoldTapped.add(i); }
+        if (!pb[i] && this.padPrev[i] && holdBtns.has(i) && !this.padHoldDone[i]) this.padRelease.add(i);
       }
       const ax = g.axes[0] || 0, ay = g.axes[1] || 0, m = Math.hypot(ax, ay);
       if (m > dz) { const k = Math.min(1, (m - dz) / (1 - dz)); padMove = { x: (ax / m) * k, y: (ay / m) * k, mag: k }; this.setDevice('pad'); }
@@ -273,7 +307,7 @@ export class Input {
     this.down = new Map();
     for (const { id } of ACTIONS) {
       let on = (S.keys[id] || []).some((c) => this.keys.has(c));
-      if (!on) on = (S.pad[id] || []).some((i) => pb[i]);
+      if (!on) { const hb = this.holdButtons(); on = (S.pad[id] || []).some((i) => pb[i] && !hb.has(i)); }
       if (!on) on = this.touch.buttons.has(id);
       this.down.set(id, on);
     }
@@ -302,7 +336,19 @@ export class Input {
       this.aimMag = 0;
       this.aimSource = this.lastDevice;
     }
+    // touch buttons with a hold action
+    const tnow = performance.now();
+    for (const p of this.touch.pointers.values()) {
+      if (p.btn && p.btn.hold && !p.holdFired && tnow - p.t >= 450) { p.holdFired = true; this.tapped.add('touch:' + p.btn.hold); }
+    }
     this.padPrev = pb;
+  }
+
+  holdButtons() { return new Set(Object.values(this.settings.padHold || {}).flat()); }
+  holdProgress(id) {
+    const now = performance.now();
+    for (const i of (this.settings.padHold || {})[id] || []) if (this.padButtons && this.padButtons[i] && !this.padHoldDone[i]) return Math.min(1, (now - this.padDownAt[i]) / 400);
+    return 0;
   }
 
   isDown(id) { return !!this.down.get(id); }
@@ -311,11 +357,13 @@ export class Input {
     if (this.down.get(id) && !this.prev.get(id)) return true;
     const S = this.settings;
     if ((S.keys[id] || []).some((c) => this.tapped.has(c))) return true;
-    if ((S.pad[id] || []).some((i) => this.padTapped.has(i))) return true;
+    const hb = this.holdButtons();
+    if ((S.pad[id] || []).some((i) => (hb.has(i) ? this.padRelease.has(i) : this.padTapped.has(i)))) return true;
+    if (((S.padHold || {})[id] || []).some((i) => this.padHoldTapped.has(i))) return true;
     return this.tapped.has('touch:' + id);
   }
 
-  endFrame() { this.tapped.clear(); this.padTapped.clear(); }
+  endFrame() { this.tapped.clear(); this.padTapped.clear(); this.padRelease.clear(); this.padHoldTapped.clear(); }
 
   rumble(kind) {
     const g = this.pad;

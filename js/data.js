@@ -2,6 +2,36 @@
 
 export const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
 
+// Balance pass (design, from playtest audit): target time-to-kill tiers on a 200 HP zed —
+// pistols/SMGs 1.2-1.8 s, ARs/shotguns/rifles 0.6-1.0 s, LMG/magnum/bow 0.4-0.7 s, explosives scarce.
+const MELEE_TIERS = {
+  light: { names: /^(knife|machete|chain)$/i, damage: 40, 'fire-rate': 300, pierce: 1 },
+  medium: { names: /^(2b4|baseball-bat|crowbar|wrench|steel-pipe|iron-bar|hoe|shovel|axe|barbed-wire-bat|cello)$/i, damage: 70, 'fire-rate': 550, pierce: 1 },
+  heavy: { names: /^(fire-axe|sledgehammer|scythe|glave|katana|sword)$/i, damage: 120, 'fire-rate': 900, pierce: 2 },
+  saw: { names: /^chainsaw$/i, damage: 25, 'fire-rate': 100, pierce: 2 },
+  shield: { names: /^riot-shield/i, damage: 40, 'fire-rate': 500, pierce: 3 },
+};
+const OVERRIDES = {
+  Beretta92: { 'reload-time': 1600 }, peacemaker: { damage: 25 }, 'custom-army': { damage: 25 },
+  MG4: { damage: 22 }, Bow: { pierce: 1 }, Bowgun: { spread: 1, 'spread-angle': 0 },
+  'Rocket-Launcher': { 'max-mag': 1, mag: 1 }, Railgun: { damage: 2000, 'reload-time': 6000 },
+};
+function setStat(it, k, v, ups) {
+  const old = it[k];
+  it[k] = v;
+  const u = ups && ups.find((x) => x.kind === k);
+  if (u && old) u.levels = u.levels.map(([val, cost]) => [Math.max(1, Math.round((val * v) / old)), cost]);
+}
+function balance(items, upgrades) {
+  for (const it of new Set(items.values())) {
+    const ups = upgrades.get(it['sprite-id']);
+    if (it.kind === 'melee') {
+      for (const t of Object.values(MELEE_TIERS)) if (t.names.test(it.name)) { for (const k of ['damage', 'fire-rate', 'pierce']) setStat(it, k, t[k], ups); break; }
+    }
+    for (const [k, v] of Object.entries(OVERRIDES[it.name] || {})) setStat(it, k, v, ups);
+  }
+}
+
 export class GameData {
   constructor(assets) {
     const t = assets.tables;
@@ -19,9 +49,10 @@ export class GameData {
     this.names = new Map(t.id_lookup.map(([id, name]) => [id, name]));
     for (const [id, name] of this.names) if (id >= 30000 && id < 30100) this.itemsByName.set(norm(name), { name, kind: 'ammo', 'sprite-id': id });
 
+    this.upgrades = new Map(t.wep_upgrades.map((u) => [u.id, u.ups]));
+    balance(this.items, this.upgrades);
     this.mobs = new Map(t.mob_db.map((m) => [m.id, m]));
     this.outfits = new Map(t.outfits.map(([id, list]) => [id, list]));
-    this.upgrades = new Map(t.wep_upgrades.map((u) => [u.id, u.ups]));
     this.perks = t.perkinfo_en;
     this.recipes = t.crafting_recipes.map(([[out, n], parts]) => ({ out, n, parts }));
     // Drop tables (order as shipped): 0 ammo boxes, 1 on-kill, 2 guns, 3 melee.

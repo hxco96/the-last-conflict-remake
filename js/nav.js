@@ -13,7 +13,7 @@ export class FlowField {
 
   cellCost(i) {
     const m = this.map;
-    if (m.solid[i]) return -1;
+    if (m.solid[i]) return m.breach[i] ? 40 : -1;
     const d = m.dyn[i];
     if (d && (d.kind === 'door' ? !d.open : d.hp > 0)) return BREACH_COST;
     return 0;

@@ -2,9 +2,13 @@ import { Atlas } from './assets.js';
 import { GameMap, T } from './map.js';
 import { FlowField } from './nav.js';
 import { Player, Mob, dirOf, cellOf, WALK, RUN, JUMP_TIME } from './actors.js';
-import { WeaponSlot, Effects, Projectiles, fireWeapon, slotFor } from './combat.js';
-import { play, sfx, music } from './sfx.js';
+import { WeaponSlot, Effects, Projectiles, fireWeapon } from './combat.js';
+import { AmmoBag, Throwables, DIFFICULTY, payout } from './profile.js';
+import { tierOf, lootCap } from './tiers.js';
+import { play, sfx, music, sample } from './sfx.js';
 import { norm } from './data.js';
+import { Extras, THEMES } from './modes.js';
+import { LobbyExt } from './lobby.js';
 import { spawnNPC, updateNPC, hurtNPC, reviveNPC, rescueSurvivor } from './npc.js';
 
 // Group unlock delays from spawn_levels_*.rktd are in seconds; scaled so a solo run sees them sooner.
@@ -12,13 +16,13 @@ const TIME_SCALE = 1 / 3;
 const AMBIENT_DARK = 0.8;
 
 export const CLASSES = {
-  Riot: { icon: 'Riot-Specialist_default_x_0', loadout: ['fire-axe', 'Beretta92', 'Spas-12', ['Grenade', 2]],
+  Riot: { icon: 'Riot-Specialist_default_x_0', loadout: ['Beretta92'],
     perks: ['Juggernaut', 'HeavyHits', 'BloodLust', 'Agile', 'BluntForce', 'Savagery'] },
-  Sniper: { icon: 'crossx_default_x_0', loadout: ['crowbar', 'Beretta92', 'M40', ['Grenade', 1]],
+  Sniper: { icon: 'crossx_default_x_0', loadout: ['Beretta92'],
     perks: ['Steady', 'Marksman', 'Hypersonic', 'Headshot', 'Dazzle'] },
-  Demo: { icon: 'Demolition_default_x_0', loadout: ['crowbar', 'Beretta92', 'Grenade-Launcher', ['Grenade', 6]],
+  Demo: { icon: 'Demolition_default_x_0', loadout: ['Beretta92'],
     perks: ['ShortFuse', 'BombsAway', 'Kamikaze', 'BigBang'] },
-  Medic: { icon: 'Medic_default_x_0', loadout: ['crowbar', 'Beretta92', 'MP5', ['Grenade', 1]], extra: [['F.-Aid-Spray', 2]],
+  Medic: { icon: 'Medic_default_x_0', loadout: ['Beretta92'],
     perks: ['MutualCare', 'PainTolerance', 'TraumaCare', 'Sanitation', 'HealingPulse', 'VitalSigns'] },
 };
 const FRENZY_PERKS = new Set(['BluntForce', 'Savagery', 'Headshot', 'Dazzle', 'BigBang', 'HealingPulse', 'VitalSigns']);
@@ -62,7 +66,7 @@ export class Game {
     this.muzzle = 0;
     this.webbed = 0;
     this.bleed = 0;
-    this.flashlight = true;
+    this.flashlight = !this.opts.lobby;
     this.tempLights = [];
     this.barkT = 8;
     this.cls = CLASSES[this.opts.cls];
@@ -75,27 +79,27 @@ export class Game {
     if (this.hasPerk('MutualCare')) this.player.maxHp = Math.round(this.player.maxHp * 1.25);
     this.player.hp = this.player.maxHp;
 
-    this.slots = [null, null, null, null];
-    this.cur = 1;
+    // Inventory: generic weapon slots, typed ammo slots and a separate throwables pouch.
+    // Sizes and weapon upgrades come from the persistent profile.
+    this.profile = this.opts.profile || null;
+    this.diff = DIFFICULTY[this.opts.difficulty] || DIFFICULTY.Normal;
+    const PR = this.profile;
+    this.slots = new Array(PR ? PR.level('weaponSlots') : 3).fill(null);
+    this.cur = 0;
     this.prev = 0;
-    this.ammo = new Map();
+    this.ammo = new AmmoBag(PR ? PR.level('ammoSlots') : 2, (k) => this.data.ammoCap.get(k) || 100);
+    this.throwables = new Throwables(1 + 0.5 * (PR ? PR.inv.throwCap : 0));
     this.items = new Map(); // consumables, materials, boards
     this.reload = null;
-    for (const entry of this.cls.loadout) {
-      const [name, n] = Array.isArray(entry) ? entry : [entry, null];
-      const it = this.data.item(name);
-      if (!it) continue;
-      const s = new WeaponSlot(it, this.data, n ?? undefined);
-      this.slots[slotFor(it)] = s;
-      if (s.isGun) this.addAmmo(s.ammoKind, it['max-mag'] * 2);
-    }
-    for (const [name, n] of this.cls.extra || []) this.items.set(name, n);
-    this.cur = this.slots[2] ? 2 : 1;
+    this.applyLoadout(this.opts.loadout || this.classLoadout());
 
     this.setupSpawner();
     this.floors[this.z].populated = true;
-    this.populate();
-    this.msg('Survive. ' + this.opts.map.name + ' — ' + this.opts.cls + ' class', '#ffd36b');
+    if (!this.opts.lobby) this.populate();
+    if (!this.opts.lobby) this.msg(`${this.opts.mode || 'Survival'} · ${this.opts.theme || 'Zeds'} — ${this.opts.map.name}, ${this.opts.cls} class`, '#ffd36b');
+    this.ext = this.opts.lobby ? new LobbyExt(this) : new Extras(this);
+    this.ghost = !!this.opts.spectate;
+    this.spec = { x: this.player.x, y: this.player.y };
   }
 
   // ---------- floors ----------
@@ -110,7 +114,7 @@ export class Game {
 
   floorState(z) {
     if (!this.floors[z]) {
-      const map = new GameMap(this.json, this.assets, z);
+      const map = new GameMap(this.json, this.assets, z, { clean: !!this.opts.lobby });
       this.floors[z] = { map, flow: new FlowField(map), mobs: [], pickups: map.pickups.map((p) => this.makePickup(p.name, p.x, p.y, p.amount, p.tile)), npcs: [], populated: false };
     }
     return this.floors[z];
@@ -188,14 +192,20 @@ export class Game {
     return this.map.randomWalkable() || { x: this.map.pw / 2, y: this.map.ph / 2 };
   }
 
+  // Infected atlas for most mobs; mechs live in their own robot atlases.
+  mobAtlas(def) {
+    if (Mob.layersFor(def, this.atlas.infected, this.data.outfits).length) return this.atlas.infected;
+    return (this.assets.robots || []).find((a) => Mob.layersFor(def, a, this.data.outfits).length) || this.atlas.infected;
+  }
+
   setupSpawner() {
-    const table = this.assets.tables.spawn_levels_zeds;
+    const table = this.assets.tables[(THEMES[this.opts.theme] || THEMES.Zeds).table] || this.assets.tables.spawn_levels_zeds;
     this.groups = table.map((g) => {
       let ids = g['mob-ids'];
       if (typeof ids[0] === 'number') ids = [ids];
       ids = ids.filter(([id]) => {
         const def = this.data.mobs.get(id);
-        return def && Mob.layersFor(def, this.atlas.infected, this.data.outfits).length;
+        return def && Mob.layersFor(def, this.mobAtlas(def), this.data.outfits).length;
       });
       return { ids, unlock: g.delay * TIME_SCALE, cap: g['max-mobs'], announced: g.delay === 0, firstId: (Array.isArray(g['mob-ids'][0]) ? g['mob-ids'][0][0] : g['mob-ids'][0]) };
     }).filter((g) => g.ids.length);
@@ -221,13 +231,13 @@ export class Game {
       if (p) this.pickups.push(this.makePickup(roll < 0.6 ? 'Herb-G' : roll < 0.8 ? 'Herb-R' : 'Herb-B', p.x, p.y, 1));
     }
     for (const r of map.markers.RanMelee || []) {
-      const d = this.data.rollDrop(3);
+      const d = this.rollLoot(3);
       const p = cellIn(r);
       if (d && p) this.pickups.push(this.makePickup(d.name, p.x, p.y, null));
     }
     // A few random guns from the gun drop table.
     for (let i = 0; i < 3; i++) {
-      const d = this.data.rollDrop(2);
+      const d = this.rollLoot(2);
       const p = map.randomWalkable();
       if (d && p) this.pickups.push(this.makePickup(d.name, p.x, p.y - 8, null));
     }
@@ -244,21 +254,38 @@ export class Game {
     }
     // a few infected already roaming, away from the player
     const zeds = this.groups[0];
-    for (let i = 0; i < 5 && zeds; i++) {
-      const p = map.randomWalkable();
-      if (p && Math.hypot(p.x - this.player.x, p.y - this.player.y) > 320) this.spawnMob(this.pickId(zeds.ids), p.x, p.y);
+    for (let i = 0; i < 5 && zeds && this.opts.mode !== 'Peaceful'; i++) {
+      const p = this.spawnPoint();
+      if (p) this.spawnMob(this.pickId(zeds.ids), p.x, p.y);
     }
   }
 
-  makePickup(name, x, y, amount, tile = null) {
-    const it = this.data.item(name);
+  // Loot found on maps is limited to low weapon tiers early in a match (see tiers.js lootCap).
+  rollLoot(table, boss = false) {
+    const cap = lootCap(this.time, boss);
+    for (let i = 0; i < 16; i++) {
+      const d = this.data.rollDrop(table);
+      if (!d) return null;
+      const it = this.data.item(d.name);
+      if (it && (it.kind === 'gun' || it.kind === 'melee') && tierOf(it) > cap) continue;
+      return d;
+    }
+    return null;
+  }
+
+  makePickup(name, x, y, amount, tile = null, force = false) {
+    let it = this.data.item(name);
+    if (!force && !this.opts.lobby && it && (it.kind === 'gun' || it.kind === 'melee') && tierOf(it) > lootCap(this.time, false)) {
+      const d = this.rollLoot(it.kind === 'melee' ? 3 : 2);
+      if (d) { name = d.name; tile = null; it = this.data.item(name); }
+    }
     let kind = 'misc';
     if (/gunpowder/i.test(name)) kind = 'material';
     else if (/^boards$/i.test(name)) kind = 'board';
     else if (it && it.kind === 'ammo') kind = 'ammo';
     else if (it && it.kind === 'consumable') kind = 'consumable';
-    else if (it && (it.kind === 'gun' || it.kind === 'melee' || it.kind === 'throwable')) kind = 'weapon';
-    else if (it && it.kind === 'mine') kind = 'consumable';
+    else if (it && (it.kind === 'throwable' || it.kind === 'mine')) kind = 'throwable';
+    else if (it && (it.kind === 'gun' || it.kind === 'melee')) kind = 'weapon';
     return { name: it ? it.name : name, item: it, kind, x, y, amount, tile, bob: Math.random() * 6 };
   }
 
@@ -269,13 +296,46 @@ export class Game {
     const list = this.assets.barks[kind];
     if (list && list.length) this.player.bark = { text: list[Math.floor(Math.random() * list.length)], t: 2.5 };
   }
-  addAmmo(kind, n) {
-    const cap = this.data.ammoCap.get(kind) || 100;
-    const have = this.ammo.get(kind) || 0;
-    const add = Math.max(0, Math.min(cap - have, n));
-    this.ammo.set(kind, have + add);
-    return add;
+  // Starting kit for the chosen class (weapons, two mags of ammo each, throwables, extras).
+  classLoadout() {
+    const L = { weapons: [], ammo: [], throwables: [], items: [] };
+    const carried = this.profile && this.profile.inventory.length ? this.profile.inventory : ['Beretta92'];
+    for (const name of carried) {
+      const it = this.data.item(name);
+      if (!it || (it.kind !== 'gun' && it.kind !== 'melee')) continue;
+      L.weapons.push(it.name);
+      if (it.kind === 'gun') L.ammo.push([it['ammo-kind'], it['max-mag'] * (it.class === 'handgun' ? 3 : 2)]);
+    }
+    if (!L.weapons.length) { const p = this.data.item('Beretta92'); L.weapons.push(p.name); L.ammo.push([p['ammo-kind'], p['max-mag'] * 3]); }
+    return L;
   }
+
+  applyLoadout(L) {
+    this.slots.fill(null);
+    L.weapons.slice(0, this.slots.length).forEach((name, i) => { const it = this.data.item(name); if (it) this.slots[i] = this.newSlot(it); });
+    for (const [k, n] of L.ammo) this.ammo.claim(k, n);
+    for (const [name, n] of L.throwables) { const it = this.data.item(name); if (it) this.throwables.add(it, n); }
+    for (const [name, n] of L.items) this.items.set(name, (this.items.get(name) || 0) + n);
+    this.cur = Math.max(0, this.slots.findIndex((s) => s && s.isGun && s.item.class !== 'handgun'));
+    if (!this.slots[this.cur]) this.cur = Math.max(0, this.slots.findIndex(Boolean));
+  }
+
+  // Snapshot of what the player carries (lobby -> match hand-off).
+  loadoutSnapshot() {
+    return { weapons: this.slots.filter(Boolean).map((s) => s.item.name), ammo: [...this.ammo], throwables: [...this.throwables.counts].filter(([, n]) => n > 0), items: [...this.items].filter(([, n]) => n > 0) };
+  }
+
+  newSlot(it) {
+    const ups = this.profile ? this.profile.ups(it['sprite-id']) : {};
+    const s = new WeaponSlot(it, this.data, undefined, ups);
+    s.mag = s.stat('max-mag') ?? it['max-mag'];
+    return s;
+  }
+
+  addAmmo(kind, n) { return this.ammo.claim(kind, n); }
+
+  // Estimated payout so far (kills, time alive, difficulty).
+  get earnings() { return payout({ kills: this.kills, alive: this.aliveTime || 0, won: !!this.won, difficulty: this.opts.difficulty }); }
 
   perkMods(slot) {
     const it = slot.item;
@@ -307,28 +367,88 @@ export class Game {
   spawnMob(id, x, y) {
     const def = this.data.mobs.get(id);
     if (!def) return null;
-    const m = new Mob(def, x, y, this.atlas.infected, this.data.outfits);
+    const m = new Mob(def, x, y, this.mobAtlas(def), this.data.outfits);
     if (!m.layers.length) return null;
+    m.maxHp = m.hp = Math.round(m.maxHp * (this.diff ? this.diff.hp : 1));
     this.mobs.push(m);
     return m;
   }
 
-  spawnPoint() {
-    // Nearest of a few candidates that is out of sight range and has a route to the player.
-    const rects = this.map.markers.MobSpawn || [];
-    const pl = this.player;
-    let best = null, bd = Infinity;
-    for (let i = 0; i < 12; i++) {
-      const rect = rects.length && Math.random() < 0.7 ? rects[Math.floor(Math.random() * rects.length)] : null;
-      const p = this.map.randomWalkable(rect);
-      if (!p) continue;
-      const d = Math.hypot(p.x - pl.x, p.y - pl.y);
-      if (d > 300 && d < bd && this.flow.dist[Math.floor(p.y / T) * this.map.w + Math.floor(p.x / T)] !== -1) { best = p; bd = d; }
+  // ---------- spectating & joining a running match ----------
+  // While spectating, the player body is parked off-map: mobs have no route to it and wander.
+  updateSpectator(dt) {
+    const inp = this.input, pl = this.player;
+    pl.x = -5000; pl.y = -5000;
+    if (inp && (!this.session || this.session.view === 'spectate')) {
+      const sp = (inp.isDown('run') ? 600 : 300) * dt;
+      this.spec.x = Math.max(0, Math.min(this.map.pw, this.spec.x + inp.move.x * sp));
+      this.spec.y = Math.max(0, Math.min(this.map.ph, this.spec.y + inp.move.y * sp));
     }
-    return best;
+    sfx.listener.x = this.spec.x; sfx.listener.y = this.spec.y;
+  }
+
+  deploy(loadout) {
+    const sp = this.pickSpawn();
+    const pl = this.player;
+    if (loadout) { this.ammo.slots.length = 0; this.throwables.counts.clear(); this.items.clear(); this.applyLoadout(loadout); }
+    pl.x = sp.x; pl.y = sp.y; pl.hp = pl.maxHp; pl.alive = true; pl.jumpT = 0;
+    this.ghost = false;
+    this.deployedAt = this.time;
+    this.aliveTime = 0; this.kills = 0;
+    this.flowT = 0;
+    this.msg('Deployed! ' + (this.ext.cfg ? this.ext.cfg.desc : ''), '#7dff8a');
+  }
+
+  spawnPoint() {
+    // Original behaviour: infected come in from the map's MobSpawn rects (outer edges on almost
+    // every map). Uniform pick, never on screen, never close, never in a sealed room.
+    let cells = this.spawnCells(this.map);
+    // rects walled off from the playable area (e.g. Hospital's river strip): use the outer ring instead
+    if (!this.ghost && cells.length && this.flow.dist.some((d) => d !== -1) && !cells.some(([x, y]) => this.flow.dist[y * this.map.w + x] !== -1)) {
+      if (!this.map._ringCells || !this.map._ringCells.length) {
+        // outer ring of the area the player can actually reach (6 cells in from its bounding box)
+        const W = this.map.w, reach = [];
+        let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+        this.flow.dist.forEach((d, i) => { if (d === -1) return; const x = i % W, y = (i / W) | 0; if (this.map.blocking(x, y)) return; reach.push([x, y]); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); });
+        this.map._ringCells = reach.filter(([x, y]) => Math.min(x - x0, x1 - x, y - y0, y1 - y) < 6);
+      }
+      cells = this.map._ringCells;
+    }
+    if (!cells.length) return null;
+    const pl = this.player, cam = this.cam, map = this.map;
+    for (let i = 0; i < 16; i++) {
+      const [cx, cy] = cells[(Math.random() * cells.length) | 0];
+      const x = cx * T + 16, y = cy * T + 24;
+      if (!this.ghost) {
+        if (Math.hypot(x - pl.x, y - pl.y) < 480) continue;
+        if (cam && x > cam.x - 48 && x < cam.x + cam.vw + 48 && y > cam.y - 48 && y < cam.y + cam.vh + 64) continue;
+        if (this.flow.dist[cy * map.w + cx] === -1) continue;
+      }
+      if (map.blocking(cx, cy)) continue;
+      return { x, y };
+    }
+    return null;
+  }
+
+  // Spawn cells for a floor: its MobSpawn rects, else the outer ring reachable from the border
+  // (closed doors and barricades count as walls so sealed rooms never spawn).
+  spawnCells(map) {
+    if (map._spawnCells) return map._spawnCells;
+    let cells = (map.markers.MobSpawn || []).flatMap((r) => map.walkableCellsIn(r));
+    if (!cells.length) {
+      const W = map.w, H = map.h, seen = new Uint8Array(W * H), q = [];
+      const push = (x, y) => { if (x < 0 || y < 0 || x >= W || y >= H) return; const i = y * W + x; if (seen[i] || map.blocking(x, y)) return; seen[i] = 1; q.push(i); };
+      for (let x = 0; x < W; x++) { push(x, 0); push(x, H - 1); }
+      for (let y = 0; y < H; y++) { push(0, y); push(W - 1, y); }
+      while (q.length) { const i = q.pop(), x = i % W, y = (i / W) | 0; push(x + 1, y); push(x - 1, y); push(x, y + 1); push(x, y - 1); }
+      for (let i = 0; i < W * H; i++) if (seen[i]) { const x = i % W, y = (i / W) | 0; if (Math.min(x, y, W - 1 - x, H - 1 - y) < 6) cells.push([x, y]); }
+      if (!cells.length) for (let i = 0; i < W * H; i++) if (seen[i]) cells.push([i % W, (i / W) | 0]);
+    }
+    return (map._spawnCells = cells);
   }
 
   updateSpawner(dt) {
+    if (this.ext && this.ext.noSpawn) return;
     this.spawnT -= dt;
     for (const g of this.groups) {
       if (!g.announced && this.time >= g.unlock) {
@@ -338,7 +458,7 @@ export class Game {
     }
     if (this.spawnT > 0) return;
     const alive = this.mobs.filter((m) => m.alive).length;
-    const cap = Math.min(8 + this.time / 8, 50);
+    const cap = Math.min(8 + this.time / 8, 50) * (this.diff ? this.diff.spawn : 1);
     this.spawnT = Math.max(0.5, 2.2 - this.time / 200);
     if (alive >= cap) return;
     const open = this.groups.filter((g) => this.time >= g.unlock);
@@ -388,16 +508,16 @@ export class Game {
     this.fx.spawn('blood-explode', m.x, m.cy, { scale: m.boss ? 2 : 1 });
     this.bloodDecal(m.x, m.y - 2, 1);
     const value = m.boss ? 100 : m.def.hp >= 800 ? 20 : 5;
-    this.coinsList.push({ x: m.x, y: m.y - 6, v: value, t: 0, vx: (Math.random() - 0.5) * 40, vy: -40 });
+    this.fx.spawn('coin', m.x, m.y - 14, { scale: 0.35 });
     if (this.frenzyT <= 0) this.frenzy = Math.min(25, this.frenzy + 1);
     if (this.hasPerk('HeavyHits')) this.player.hp = Math.min(this.player.maxHp, this.player.hp + 3);
     const d = this.data.rollDrop(1);
     if (d) this.pickups.push(this.makePickup(d.name, m.x, m.y - 6, null));
-    if (m.boss) for (let i = 0; i < 3; i++) { const g = this.data.rollDrop(2); if (g) this.pickups.push(this.makePickup(g.name, m.x + i * 12 - 12, m.y, null)); }
+    if (m.boss) for (let i = 0; i < 3; i++) { const g = this.rollLoot(2, true); if (g) this.pickups.push(this.makePickup(g.name, m.x + i * 12 - 12, m.y, null, null, true)); }
   }
 
   bloodDecal(x, y, scale) {
-    if (this.hasPerk('Sanitation')) return;
+    if (this.hasPerk('Sanitation') || this.opts.lobby) return;
     const a = this.atlas.infected;
     const n = Math.floor(Math.random() * 7);
     const found = a.find('bpuddle-' + n, ['default', 'walk', 'death'], ['x', 's', 'e']);
@@ -430,6 +550,7 @@ export class Game {
     this.shake = Math.max(this.shake, 7);
     play.explode(x, y);
     if (this.input) this.input.rumble('boom');
+    if (element === 'fire' && this.ext) this.ext.addFire(x, y, radius * 0.7, this.hasPerk('Scorched') ? 12 : 6);
     for (const m of this.mobs) {
       if (!m.alive) continue;
       const d = Math.hypot(m.x - x, m.cy - y);
@@ -451,6 +572,7 @@ export class Game {
   hurtPlayer(dmg, kind) {
     const pl = this.player;
     if (!pl.alive) return;
+    if (/^(bite|rush|acid|web)$/.test(kind)) dmg *= this.diff ? this.diff.dmg : 1;
     if (this.hasPerk('PainTolerance')) dmg *= 1 - Math.min(0.5, (pl.maxHp - pl.hp) / 100);
     pl.hp -= dmg;
     pl.hurtT = 0.15;
@@ -499,6 +621,7 @@ export class Game {
     const n = this.items.get(name) || 0;
     if (!n) return false;
     const it = this.data.item(name);
+    if (it && it.kind === 'mine') return this.ext.placeMine(name);
     const pl = this.player;
     if (!it || it.kind !== 'consumable') return false;
     const heal = it['hp-heal'] || 0, cure = it.cure || 0;
@@ -543,42 +666,58 @@ export class Game {
     for (const [p, k] of r.parts) { const c = this.canonical(p); this.items.set(c, (this.items.get(c) || 0) - k); }
     const out = this.data.item(r.out);
     if (out && out.kind === 'ammo') this.addAmmo(out['sprite-id'], r.n);
-    else if (out && out.kind === 'throwable') this.giveWeapon(out, r.n);
+    else if (out && out.kind === 'throwable') this.throwables.add(out, r.n);
     else { const c = this.canonical(r.out); this.items.set(c, (this.items.get(c) || 0) + r.n); }
     this.msg('Crafted ' + this.canonical(r.out) + (r.n > 1 ? ' x' + r.n : ''), '#9cd4ff');
     play.pickup();
   }
 
-  giveWeapon(it, count) {
-    const si = slotFor(it);
-    const old = this.slots[si];
-    if (old && old.item.name === it.name && it.kind === 'throwable') { old.mag += count || 1; return; }
-    if (old) this.pickups.push(this.makePickup(old.item.name, this.player.x + 6, this.player.y - 4, old.isThrowable ? old.mag : old.mag));
-    const s = new WeaponSlot(it, this.data, it.kind === 'throwable' ? (count || it['max-mag']) : it['max-mag']);
-    this.slots[si] = s;
-    if (si !== 3) { this.prev = this.cur; this.cur = si; }
-    if (s.isGun && !(this.ammo.get(s.ammoKind) > 0)) this.addAmmo(s.ammoKind, Math.floor(it['max-mag']));
+  // Weapons go into a free slot, otherwise replace the one in hand (dropped at your feet).
+  giveWeapon(it) {
+    if (it.kind === 'throwable' || it.kind === 'mine') return this.throwables.add(it, 1);
+    let si = this.slots.findIndex((s) => !s);
+    if (si < 0) {
+      si = this.cur;
+      const old = this.slots[si];
+      if (old && !this.opts.lobby) this.pickups.push(this.makePickup(old.item.name, this.player.x + 6, this.player.y - 4, null, null, true));
+    }
+    this.slots[si] = this.newSlot(it);
+    this.prev = this.cur; this.cur = si; this.reload = null;
+    if (this.slots[si].isGun && !this.opts.lobby) this.ammo.topUp(it['ammo-kind'], it['max-mag']);
+  }
+
+  ammoAmount(p) {
+    const cap = this.data.ammoCap.get(p.item['sprite-id']) || 60;
+    return Math.max(1, Math.round((p.amount ?? 0.5) <= 1 ? cap * (p.amount ?? 0.5) : p.amount));
   }
 
   collect(p, manual) {
     const pl = this.player;
     if (p.kind === 'ammo') {
+      // auto: only tops up a slot already holding this type; manual (Use) claims a free slot
+      // or replaces a slot whose ammo none of your weapons use
       const id = p.item['sprite-id'];
-      const cap = this.data.ammoCap.get(id) || 60;
-      const got = this.addAmmo(id, Math.max(1, Math.round((p.amount ?? 0.5) <= 1 ? cap * (p.amount ?? 0.5) : p.amount)));
+      let got = this.ammo.topUp(id, this.ammoAmount(p));
+      if (!got && manual && !this.ammo.has(id)) {
+        const used = new Set(this.slots.filter((s) => s && s.isGun).map((s) => s.ammoKind));
+        const repl = this.ammo.slots.findIndex((s) => !used.has(s.kind));
+        got = this.ammo.claim(id, this.ammoAmount(p), repl);
+        if (!got) { this.msg('Ammo slots full — every slot feeds one of your guns', '#ffb0b0'); return false; }
+      }
       if (!got) return false;
       this.msg('+' + got + ' ' + p.name);
+    } else if (p.kind === 'throwable') {
+      const n = Math.max(1, typeof p.amount === 'number' && p.amount >= 1 ? p.amount : 1);
+      const got = this.throwables.add(p.item, n);
+      if (!got) { if (manual) this.msg(p.name + ' pouch full'); return false; }
+      this.msg('+' + got + ' ' + p.name, '#ffd36b');
     } else if (p.kind === 'consumable' || p.kind === 'material' || p.kind === 'board') {
       const n = Math.max(1, typeof p.amount === 'number' && p.amount >= 1 ? p.amount : 1);
       this.items.set(p.name, (this.items.get(p.name) || 0) + n);
       this.msg('+' + n + ' ' + p.name);
     } else if (p.kind === 'weapon') {
-      if (!manual) {
-        const s = this.slots[slotFor(p.item)];
-        if (!(p.item.kind === 'throwable' && (!s || s.item.name === p.item.name))) return false;
-      }
-      const count = p.item.kind === 'throwable' ? (typeof p.amount === 'number' && p.amount >= 1 ? p.amount : 1) : null;
-      this.giveWeapon(p.item, count);
+      if (!manual) return false;
+      this.giveWeapon(p.item);
       this.msg('Picked up ' + p.name, '#ffd36b');
     } else {
       if (!manual) return false;
@@ -593,6 +732,7 @@ export class Game {
     const pl = this.player;
     const target = this.nearestInteractable();
     if (!target) return;
+    if (target.type === 'ext') { target.run(); return; }
     if (target.type === 'pickup') this.collect(target.p, true);
     else if (target.type === 'revive') reviveNPC(this, target.n);
     else if (target.type === 'rescue') rescueSurvivor(this, target.n);
@@ -618,6 +758,7 @@ export class Game {
   }
 
   nearestInteractable() {
+    if (this.ext && this.ext.interactable) { const t = this.ext.interactable(); if (t) return t; }
     const pl = this.player;
     let best = null, bd = 34;
     for (const n of this.npcs) {
@@ -658,12 +799,15 @@ export class Game {
     this.messages = this.messages.filter((m) => m.t > 0);
     if (pl.bark) { pl.bark.t -= dt; if (pl.bark.t <= 0) pl.bark = null; }
 
-    this.handleActions();
-    this.updatePlayer(dt);
-    this.checkStairs();
-    this.updateFollowers(dt);
-    sfx.listener.x = pl.x; sfx.listener.y = pl.y;
-    if (!pl.alive) {
+    if (this.ghost) this.updateSpectator(dt);
+    else {
+      this.handleActions();
+      this.updatePlayer(dt);
+      this.checkStairs();
+      this.updateFollowers(dt);
+      sfx.listener.x = pl.x; sfx.listener.y = pl.y;
+    }
+    if (!pl.alive && !this.ghost) {
       this.deathT += dt;
       if (this.deathT > 2.2 && !this.over) { this.over = true; this.onEnd(); }
     }
@@ -679,6 +823,7 @@ export class Game {
     }
 
     this.updateSpawner(dt);
+    if (this.ext) this.ext.update(dt);
     for (const m of this.mobs) this.updateMob(m, dt);
     for (const n of this.npcs) updateNPC(this, n, dt);
     this.separateHumans();
@@ -719,16 +864,20 @@ export class Game {
     const P = (a) => inp.pressed(a);
     const select = (i) => { if (this.slots[i] && i !== this.cur) { this.prev = this.cur; this.cur = i; this.reload = null; } };
     const cycle = (dir) => {
-      for (let k = 1; k <= 4; k++) { const i = (this.cur + dir * k + 8) % 4; if (this.slots[i]) { select(i); return; } }
+      const N = this.slots.length;
+      for (let k = 1; k <= N; k++) { const i = (((this.cur + dir * k) % N) + N) % N; if (this.slots[i]) { select(i); return; } }
     };
     if (P('jump')) this.jump();
+    if (P('context')) { if (this.nearestInteractable()) this.interact(); else this.jump(); }
+    if (P('mine')) { const m = [...this.throwables.counts].find(([k, v]) => v > 0 && /^mine/i.test(k)); if (m && this.ext.placeMineItem(this.data.item(m[0]))) this.throwables.counts.set(m[0], m[1] - 1); else if (!m) this.msg('No mines in your pouch'); }
     if (P('reload')) this.startReload();
     if (P('interact')) this.interact();
     if (P('grenade')) this.throwGrenade();
+    if (P('toggleThrowable')) { const n = this.throwables.cycle(); this.msg(n ? `Throwable: ${n} ×${this.throwables.counts.get(n)}` : 'No throwables', '#ffd36b'); }
     if (P('heal')) this.quickHeal();
     if (P('flashlight')) { this.flashlight = !this.flashlight; play.flashlight(); }
     if (P('frenzy') && this.frenzy >= 25 && this.frenzyT <= 0) { this.frenzyT = 15; this.frenzy = 0; this.msg('FRENZY!', '#ff4bd1'); play.frenzy(); }
-    for (let i = 0; i < 4; i++) if (P('slot' + (i + 1))) select(i);
+    for (let i = 0; i < this.slots.length; i++) if (P('slot' + (i + 1))) select(i);
     if (P('nextWeapon')) cycle(1);
     if (P('prevWeapon')) cycle(-1);
     if (P('lastWeapon') && this.slots[this.prev]) { [this.cur, this.prev] = [this.prev, this.cur]; this.reload = null; }
@@ -864,7 +1013,13 @@ export class Game {
 
     // attack
     for (const sl of this.slots) if (sl) sl.cd -= dt * 1000;
-    if (s && !this.reload) {
+    this.throwCd = (this.throwCd || 0) - dt;
+    // tactical auto-reload: quiet for 2 s and the mag is under half
+    const quiet = !this.mobs.some((m) => m.alive && Math.hypot(m.x - pl.x, m.y - pl.y) < 300);
+    this.quietT = quiet ? (this.quietT || 0) + dt : 0;
+    if (s && s.isGun && !this.reload && this.quietT > 2 && s.mag < s.stat('max-mag') * 0.5 && this.ammo.get(s.ammoKind) > 0) this.startReload();
+    this.aliveTime = (this.aliveTime || 0) + dt;
+    if (s && !this.reload && !this.opts.lobby) {
       const rate = s.stat('fire-rate') * this.perkMods(s).rate;
       const auto = s.isMelee || (s.isGun && s.item['fire-rate'] <= 150);
       const held = this.mouse.down || (inp && (inp.isDown('fire') && !(this.legacy && inp.lastDevice !== 'kbm') || (!this.legacy && inp.aimFire)));
@@ -884,7 +1039,6 @@ export class Game {
           if (inp && s.isGun) inp.rumble(s.item.damage >= 140 || (s.item.spread || 1) > 1 ? 'heavy' : 'shot');
           s.cd = rate;
           this.recoilT = 0.08;
-          if (s.isThrowable && s.mag <= 0) { this.slots[this.cur] = null; this.cur = this.slots[2] ? 2 : 1; }
         } else s.cd = 250;
       }
       if (s.isGun && s.mag <= 0 && (this.ammo.get(s.ammoKind) || 0) > 0 && s.cd <= 0) this.startReload();
@@ -894,16 +1048,20 @@ export class Game {
   }
 
   throwGrenade() {
-    const g = this.slots[3];
-    if (!g || g.cd > 0 || !this.player.alive) return;
+    if (this.opts.lobby || !this.player.alive || (this.throwCd || 0) > 0) return;
+    const name = this.throwables.sel;
+    const it = name && this.data.item(name);
+    if (!it || !(this.throwables.counts.get(name) > 0)) { this.msg('No throwables'); return; }
+    if (it.kind === 'mine') { if (this.ext.placeMineItem(it)) this.throwables.take(); this.throwCd = 0.5; return; }
+    const g = new WeaponSlot(it, this.data, 1);
     let tx = this.mouse.wx, ty = this.mouse.wy;
     const inp = this.input, pl = this.player;
     const target = this.legacy ? this.pickLegacyTarget(g) : null;
     if (target) { tx = target.x; ty = target.cy; }
     else if (inp && inp.lastDevice !== 'kbm') { tx = pl.x + Math.cos(pl.aim) * 150; ty = pl.y - 11 + Math.sin(pl.aim) * 150; }
     if (fireWeapon(this, g, tx, ty)) {
-      g.cd = g.stat('fire-rate');
-      if (g.mag <= 0) this.slots[3] = null;
+      this.throwables.take();
+      this.throwCd = (g.stat('fire-rate') || 500) / 1000;
     }
   }
 
@@ -964,7 +1122,7 @@ export class Game {
       if (/^(acid-spit|acid-h-spray|tongue|tongue-ult)$/.test(a.kind) && m.los && d < (a.range || 320) && d > 48) {
         this.beginAttack(m, a, c, dx, dy);
         const sp = 210, web = a.kind.startsWith('tongue');
-        m.pending = { kind: 'bullet', hostile: true, webbed: web, x: m.x, y: m.cy, vx: (dx / d) * sp, vy: ((dy - 0) / d) * sp,
+        m.pending = { kind: 'bullet', hostile: true, webbed: web, grab: web && (a.kind === 'tongue-ult' || m.boss || Math.random() < 0.5) ? m : null, x: m.x, y: m.cy, vx: (dx / d) * sp, vy: ((dy - 0) / d) * sp,
           range: a.range || 320, dmg: a.dmg, traveled: 0, hit: new Set(), sprite: web ? 'web-spit_default_x_0' : 'web-acid-spit_default_x_0' };
         return;
       }
@@ -1086,7 +1244,8 @@ export class Game {
     const short = Math.min(cv.height, cv.width * 0.75);
     const zoom = this.zoom = short < 500 ? Math.max(1.5, Math.round((short / 230) * 2) / 2) : Math.max(2, Math.round(cv.height / 330));
     const vw = cv.width / zoom, vh = cv.height / zoom;
-    let camX = pl.x - vw / 2, camY = pl.y - 12 - vh / 2;
+    const focus = this.ghost ? this.spec : pl;
+    let camX = focus.x - vw / 2, camY = focus.y - 12 - vh / 2;
     camX = Math.max(0, Math.min(map.pw - vw, camX));
     camY = Math.max(0, Math.min(map.ph - vh, camY));
     if (map.pw < vw) camX = (map.pw - vw) / 2;
@@ -1116,17 +1275,20 @@ export class Game {
 
     // y-sorted drawables
     const inView = (x, y, pad = 64) => x > camX - pad && x < camX + vw + pad && y > camY - pad && y < camY + vh + pad * 2;
+    if (this.ext) this.ext.drawGround(ctx);
     const list = [];
     for (const d of map.doors) if (inView(d.x, d.y)) list.push([d.y + 30, () => map.drawDynamic(ctx, d)]);
     for (const c of map.cades) if (inView(c.x, c.y)) list.push([c.y + 30, () => map.drawDynamic(ctx, c)]);
     for (const p of this.pickups) if (inView(p.x, p.y)) list.push([p.y, () => this.drawPickup(ctx, p)]);
     for (const m of this.mobs) if (inView(m.x, m.y)) list.push([m.alive ? m.y : m.y - 40, () => m.draw(ctx, this.atlas.infected)]);
-    list.push([pl.y, () => pl.draw(ctx, this.atlas.core, () => this.drawHeldWeapon(ctx))]);
+    if (!this.ghost) list.push([pl.y, () => pl.draw(ctx, this.atlas.core, () => this.drawHeldWeapon(ctx))]);
+    if (this.ext && this.ext.drawables) this.ext.drawables(list, ctx);
     for (const n of this.npcs) if (inView(n.x, n.y)) list.push([n.alive ? n.y : n.y - 30, () => n.draw(ctx, this.atlas.core, n.weapon ? () => this.drawWeapon(ctx, n, n.weapon, n.recoilT > 0, n.flashT > 0) : null)]);
     list.sort((a, b) => a[0] - b[0]);
     for (const [, f] of list) f();
 
     if (w > 0 && h > 0) ctx.drawImage(map.top, x0, y0, w, h, x0, y0, w, h);
+    if (this.ext) this.ext.drawAir(ctx);
     this.projectiles.draw(ctx, this.atlas.combat);
     this.fx.draw(ctx);
     for (const c of this.coinsList) {
@@ -1138,6 +1300,7 @@ export class Game {
     this.renderLighting(ctx, zoom, camX, camY);
     this.drawLockOn(ctx, zoom, camX, camY);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (this.ext) this.ext.drawScreen(ctx, cv.width, cv.height, Math.max(1, Math.round(cv.height / 400)));
     this.drawHud(ctx, cv.width, cv.height);
   }
 
@@ -1270,7 +1433,7 @@ export class Game {
     lc.globalCompositeOperation = 'source-over';
     lc.setTransform(1, 0, 0, 1, 0, 0);
     lc.clearRect(0, 0, L.width, L.height);
-    lc.fillStyle = `rgba(4,6,14,${AMBIENT_DARK})`;
+    lc.fillStyle = `rgba(4,6,14,${this.opts.lobby ? 0.3 : AMBIENT_DARK})`;
     lc.fillRect(0, 0, L.width, L.height);
     lc.globalCompositeOperation = 'destination-out';
     lc.setTransform(zoom, 0, 0, zoom, -camX * zoom, -camY * zoom);
@@ -1288,7 +1451,7 @@ export class Game {
       if (l.x < camX - l.radius || l.x > camX + vw + l.radius || l.y < camY - l.radius || l.y > camY + vh + l.radius) continue;
       let k = 1;
       const pat = pats[l.pattern];
-      if (pat && pat.length) k = pat[Math.floor(this.time * 12 + l.phase * 7) % pat.length] / 255;
+      if (pat && pat.length) { const v = pat[((Math.floor(this.time * 12 + l.phase * 7) % pat.length) + pat.length) % pat.length] / 255; k = Number.isFinite(v) ? v : 1; }
       hole(l.x, l.y, l.radius * (0.85 + 0.15 * k), 0.75 * (0.5 + 0.5 * k));
     }
     const pl = this.player;
@@ -1308,6 +1471,7 @@ export class Game {
     }
     if (this.muzzle > 0) hole(pl.x + Math.cos(pl.aim) * 16, pl.y - 11 + Math.sin(pl.aim) * 16, 110, 0.6);
     for (const t of this.tempLights) hole(t.x, t.y, t.r, Math.min(1, t.t / t.max));
+    if (this.ext) this.ext.lights(hole);
     for (const p of this.projectiles.list) if (p.flame || p.explode) hole(p.x, p.y, 40, 0.5);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(L, 0, 0);
@@ -1361,10 +1525,13 @@ export class Game {
     text(st.join('  ') || frenzyLabel || state.toUpperCase(), bx, vy + 58 * u, 13 * u, st.length ? '#ff9b6b' : frenzyLabel ? '#ff8bf0' : '#8fd18f');
 
     // weapon slots: bottom-right on desktop, top-right (tappable) on touch
-    const sw = (touch ? 44 : 54) * u, sh = (touch ? 36 : 44) * u, gap = 6 * u;
-    const sx0 = W - M - sw * 4 - gap * 3, sy0 = touch ? M : H - M - 70 * u;
+    const NS = this.slots.length;
+    const sw = (touch ? 44 : 54) * u * Math.min(1, 4 / NS), sh = (touch ? 36 : 44) * u, gap = 6 * u;
+    const aw = Math.max(sw * NS + gap * (NS - 1), 230 * u);
+    const portrait = touch && H > W;
+    const sx0 = portrait ? M : W - M - aw - (touch ? 56 * u : 0), sy0 = portrait ? M + 70 * u + 30 * u : touch ? M : H - M - 100 * u;
     this.slotRects = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < NS; i++) {
       const s = this.slots[i], x = sx0 + i * (sw + gap);
       this.slotRects.push({ x: x + sw / 2, y: sy0 + sh / 2, r: sw / 2 });
       panel(x, sy0, sw, sh);
@@ -1373,11 +1540,10 @@ export class Game {
       if (s) {
         const is = Math.min(sw, sh) - 8 * u;
         this.data.drawIcon(ctx, s.item.name, x + sw / 2 - is / 2, sy0 + (sh - is) / 2, is);
-        if (s.isThrowable) text('x' + s.mag, x + sw - 4 * u, sy0 + sh - 3 * u, 11 * u, '#fff', 'right');
       }
     }
     const s = this.slots[this.cur];
-    const aw = sw * 4 + gap * 3, ay = sy0 + sh + 4 * u;
+    const ay = sy0 + sh + 4 * u;
     panel(sx0, ay, aw, 22 * u);
     if (s) {
       text(s.item.name, sx0 + 6 * u, ay + 16 * u, 14 * u, '#ffd36b');
@@ -1387,6 +1553,24 @@ export class Game {
         if (this.reload) { ctx.fillStyle = '#ffd36b'; ctx.fillRect(sx0, ay + 20 * u, aw * (this.reload.t / this.reload.dur), 2 * u); }
       } else if (s.isMelee) text('MELEE', sx0 + aw - 6 * u, ay + 16 * u, 14 * u, '#ccc', 'right');
     }
+    // ammo slots + throwables pouch
+    const by = ay + 26 * u, slotsN = this.ammo.n, abw = (aw - 70 * u - gap * (slotsN - 1)) / slotsN;
+    for (let i = 0; i < slotsN; i++) {
+      const a = this.ammo.slots[i], x = sx0 + i * (abw + gap);
+      panel(x, by, abw, 24 * u);
+      if (!a) { text('EMPTY', x + abw / 2, by + 16 * u, 10 * u, '#555', 'center'); continue; }
+      const cap = this.ammo.cap(a.kind), inUse = s && s.isGun && s.ammoKind === a.kind;
+      ctx.fillStyle = inUse ? 'rgba(255,211,107,0.35)' : 'rgba(255,255,255,0.12)';
+      ctx.fillRect(x + 1, by + 20 * u, (abw - 2) * (a.count / cap), 3 * u);
+      this.data.drawIcon(ctx, this.data.names.get(a.kind) || '', x + 2 * u, by + 2 * u, 18 * u);
+      text(String(a.count), x + abw - 4 * u, by + 15 * u, 12 * u, inUse ? '#ffd36b' : '#ccc', 'right');
+    }
+    const tx = sx0 + aw - 64 * u;
+    panel(tx, by, 64 * u, 24 * u);
+    const tsel = this.throwables.sel, tn = tsel ? this.throwables.counts.get(tsel) || 0 : 0;
+    if (tsel) this.data.drawIcon(ctx, tsel, tx + 2 * u, by + 2 * u, 20 * u);
+    text(tsel ? '×' + tn : 'NONE', tx + 60 * u, by + 16 * u, 13 * u, tn ? '#fff' : '#777', 'right');
+    if (!touch) text(hint('toggleThrowable'), tx + 32 * u, by - 2 * u, 9 * u, '#777', 'center');
 
     // survival stats: top-left on desktop, under vitals on touch
     const mm = Math.floor(this.time / 60), ss = Math.floor(this.time % 60);
@@ -1395,15 +1579,15 @@ export class Game {
     let msgY;
     if (touch) {
       panel(vx, vy + vh + 4 * u, vw, 20 * u);
-      text(`${clock}   KILLS ${this.kills}   COINS ${this.coins}   ZEDS ${alive}${this.floorCount > 1 ? `   FLOOR ${this.z + 1}/${this.floorCount}` : ''}`, vx + 6 * u, vy + vh + 19 * u, 13 * u, '#ddd');
-      msgY = vy + vh + 42 * u;
+      text(`${clock}   KILLS ${this.kills}   +${this.earnings.total}c   ZEDS ${alive}${this.floorCount > 1 ? `   FLOOR ${this.z + 1}/${this.floorCount}` : ''}`, vx + 6 * u, vy + vh + 19 * u, 13 * u, '#ddd');
+      msgY = portrait ? sy0 + sh + 70 * u : vy + vh + 42 * u;
     } else {
       panel(M, M, 200 * u, 50 * u);
       text(clock, M + 8, M + 22 * u, 22 * u, '#fff');
       text(`KILLS ${this.kills}`, M + 8 + 70 * u, M + 22 * u, 15 * u, '#ff9b6b');
       const coin = A.find('coin', ['default'], ['x']);
       if (coin) A.drawCentered(ctx, coin.list[0].f, M + 16, M + 37 * u, 0.5 * u);
-      text(`${this.coins}`, M + 8 + 18 * u, M + 42 * u, 15 * u, '#ffd36b');
+      text(this.opts.lobby ? `${this.profile ? this.profile.coins : 0}` : `+${this.earnings.total}`, M + 8 + 18 * u, M + 42 * u, 15 * u, '#ffd36b');
       text(`INFECTED NEARBY ${alive}${this.floorCount > 1 ? `  ·  FLOOR ${this.z + 1}/${this.floorCount}` : ''}`, M + 8 + 70 * u, M + 42 * u, 12 * u, '#aaa');
       // class panel
       const pw = 220 * u, px = W - M - pw;
@@ -1412,7 +1596,7 @@ export class Game {
       if (icon) A.drawCentered(ctx, icon, px + 22 * u, M + 25 * u, (34 * u) / Math.max(icon[6], icon[7]));
       text(this.opts.cls.toUpperCase() + (this.legacy ? '  · LEGACY AIM' : ''), px + 44 * u, M + 18 * u, 15 * u, '#fff');
       text(this.cls.perks.filter((p) => !FRENZY_PERKS.has(p)).join(' · '), px + 44 * u, M + 36 * u, 10 * u, '#9aa');
-      msgY = M + 68 * u;
+      msgY = M + 68 * u + (this.ext && this.ext.objective && this.ext.objective() ? 30 * u : 0);
     }
 
     // messages
@@ -1445,9 +1629,22 @@ export class Game {
 
   drawTouchControls(ctx, W, H) {
     const inp = this.input;
-    const L = inp.layoutTouch(W, H, this.legacy, { frenzyReady: this.frenzy >= 25 && this.frenzyT <= 0 });
+    const s = this.slots[this.cur], pl = this.player;
+    const target = this.ghost ? null : this.nearestInteractable();
+    const healItems = ['Herb-G', 'Herb-GG', 'Herb-GGG', 'Herb-RG', 'Herb-RGB', 'Herb-BG', 'Herb-B', 'F.-Aid-Spray', 'Med-Kit', 'Bandage', 'Antibiotics'];
+    const tsel = this.throwables.sel;
+    const L = inp.layoutTouch(W, H, this.legacy, {
+      frenzyReady: this.frenzy >= 25 && this.frenzyT <= 0,
+      canReload: !!(s && s.isGun && !this.reload && s.mag < s.stat('max-mag') && this.ammo.get(s.ammoKind) > 0),
+      useLabel: target ? (target.type === 'pickup' ? 'TAKE' : target.type === 'door' ? 'DOOR' : 'USE') : null,
+      canHeal: pl.hp < pl.maxHp * 0.7 && healItems.some((n) => this.items.get(n) > 0),
+      lowHp: pl.hp < pl.maxHp * 0.3,
+      throwLabel: tsel ? (/mine/i.test(tsel) ? 'MINE' : /molotov/i.test(tsel) ? 'MOLO' : 'NADE') : 'NADE',
+      throwCount: tsel ? this.throwables.counts.get(tsel) || 0 : 0,
+      inLobby: !!this.opts.lobby,
+    });
     // weapon slots are tappable too
-    for (let i = 0; i < 4; i++) if (this.slotRects[i]) L.buttons.push({ id: 'slot' + (i + 1), label: '', ...this.slotRects[i], hidden: true });
+    for (let i = 0; i < this.slotRects.length; i++) if (this.slotRects[i]) L.buttons.push({ id: 'slot' + (i + 1), label: '', ...this.slotRects[i], hidden: true });
     const op = inp.settings.touchOpacity;
     const circle = (x, y, r, fill, stroke) => {
       ctx.beginPath(); ctx.arc(x, y, r, 0, 7);
@@ -1468,13 +1665,19 @@ export class Game {
     if (!L.legacy) drawStick(inp.touch.aim, L.aimHome, 'AIM + FIRE');
     for (const b of L.buttons) {
       if (b.hidden) continue;
-      const on = inp.touch.buttons.has(b.id);
-      const accent = b.id === 'fire' ? (this.lockTarget ? 'rgba(200,40,30,0.85)' : 'rgba(110,40,30,0.7)') : b.id === 'frenzy' ? 'rgba(170,60,200,0.8)' : 'rgba(20,24,30,0.7)';
+      const on = inp.touch.vis.has(b.id) || inp.touch.buttons.has(b.id);
+      const pulse = b.accent === 'pulse' ? 0.5 + 0.5 * Math.sin(this.time * 8) : 0;
+      const accent = b.id === 'fire' ? (this.lockTarget ? 'rgba(200,40,30,0.85)' : 'rgba(110,40,30,0.7)')
+        : b.accent === 'frenzy' ? 'rgba(170,60,200,0.8)' : b.accent === 'use' ? 'rgba(40,110,60,0.85)'
+          : b.accent === 'pulse' ? `rgba(${150 + 80 * pulse},40,40,0.85)` : b.menuItem ? 'rgba(30,34,44,0.92)' : 'rgba(20,24,30,0.7)';
+      if (b.menuItem) ctx.globalAlpha = 1;
       circle(b.x, b.y, b.r, on ? 'rgba(255,211,107,0.8)' : accent, 'rgba(255,255,255,0.4)');
-      ctx.font = `${Math.round(b.r * (b.label.length > 4 ? 0.42 : 0.6))}px Bebas, sans-serif`;
+      ctx.font = `${Math.round(b.r * (b.label.length > 4 ? 0.4 : 0.6))}px Bebas, sans-serif`;
       ctx.textAlign = 'center';
       ctx.fillStyle = on ? '#000' : '#fff';
       ctx.fillText(b.id === 'flashlight' ? (this.flashlight ? 'LIGHT' : 'DARK') : b.label, b.x, b.y + b.r * 0.2);
+      if (b.sub !== undefined) { ctx.font = `${Math.round(b.r * 0.38)}px Bebas, sans-serif`; ctx.fillStyle = '#ffd36b'; ctx.fillText('×' + b.sub, b.x + b.r * 0.75, b.y - b.r * 0.6); }
+      if (b.menuItem) ctx.globalAlpha = op;
     }
     ctx.restore();
     ctx.textAlign = 'left';

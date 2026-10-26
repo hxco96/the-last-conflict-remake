@@ -36,12 +36,37 @@ node tools/extract.js path/to/tlcr
 
 This converts the `.rktd` s-expression tables to JSON. It also decompresses 6 Tiled maps out of `data.db`, packs the tileset metadata, and copies the needed atlases.
 
+## Round cycle, lobby & economy
+
+- **Flow:** title → pick survivor & class → **the base** (lobby, the Base map cleaned up). A timer counts down to the next round (60 s first, 45 s after).
+- **Mission board:** host-pick or vote the next map, mode, spawn theme and difficulty; *Join & deploy at start* or *Join — I'll walk in*. If nobody joined, the round is skipped. A started round runs even if you stay behind: spectate it, or walk out a green **DEPLOY** door to teleport in. A round nobody deploys into ends after 150 s.
+- **Class & survivor are remembered**: the title shows one ENTER LOBBY button; "Change class / survivor" (also in the pause menu) reopens the picker. Classes differ only by perks: everyone starts with the basic Beretta92.
+- **Weapon tiers (T1 Scrap → T5 Legendary)** come from each weapon's stats (sustained DPS, time-to-kill on a 200 HP zed, range, mag, reload). Hover a table weapon in the lobby to see its card. Maps only spawn T1–T2 weapons at the start; the ceiling rises by one tier every 6 minutes (max T4) and bosses drop one tier higher.
+- **Inventory persists between runs**: weapons you buy or pick up stay with you, even if you die. Spares go in the **storage locker** in the lobby (4 slots, upgradable to 12 at the merchant). Buying with a full inventory sends the weapon to storage.
+- **Tables:** every weapon and item (162) is on display, grouped by category. Weapons are unlocked permanently with coins and are free to re-pick each round; ammo, throwables, mines and meds cost coins per purchase.
+- **Merchant:** permanent weapon upgrades (original wep_upgrades levels) and inventory upgrades: weapon slots 3→5, ammo slots 2→6, throwables pouch.
+- **Coins** are paid at the end of a match: kills ×3 + 2 per 10 s alive + 150 objective bonus, × difficulty (Easy 0.6, Normal 1, Hard 1.6, Nightmare 2.4). Saved in the browser.
+- **Inventory:** generic weapon slots; ammo lives in typed slots (auto top-up only for a type you already carry, new types need Use); grenades/mines/molotovs are a separate counted pouch, switched with Toggle throwable (T / △ / hold NADE).
+- **Shooting** is hitscan: no visible bullets, impacts show on the zombie or wall; recoil bloom and range falloff. Explosives and flamethrowers stay projectiles.
+- **Spawns** follow the original MobSpawn rects (map edges), never on screen or within 480 px; floors without reachable rects use the outer ring of the playable area. Infected climb through windows.
+- Networking is not part of this build: votes tally the local player only.
+
+## Game modes & original features
+
+- **Modes** (from the exe's mode table): Survival (endless), Extermination (kill 120), Evac (helicopter arrives at 3:00, stand in the landing ring to escape), Rescue (find every survivor, then evac), Peaceful (no infected). Battle Royale / Death Match are PvP and not included.
+- **Spawn themes** from `spawn_levels_*.rktd`: Zeds, Spiders, Chaos, Mechs (original DRAUGR / LOKI / SKJOLD robot sprites), Boss Rush.
+- **Evac helicopter**: flies in to the map's `EvacZone`/`HeliSpawn` marker with the original radio line, rotor loop and landing wind; an arrow points to it when off-screen.
+- **Boss / mob abilities** from `mob_db`: tongue attacks grab and reel you in (attack or jump to struggle free), spiders lay webs that slow you (plus the maps' WebTrap tiles), the spider queen spawns minions.
+- **Mines** (Mine, Incendiary, Nitro, Acid): place with **N** or from the inventory; they arm after 1 s and trigger on infected.
+- **Fire**: Molotovs, incendiary grenades/mines and fire explosions leave burning ground (Pyro *Scorched* / *Inferno* apply).
+- **Weather**: rain with thunder flashes, or snow, with the original ambience loops (toggle in Settings).
+
 ## Controls
 
 Every action can be rebound in **Settings** (main menu or pause): keyboard/mouse (two bindings each, conflicts flagged red), controller buttons, and touch (size, opacity, left-handed mirror, and which action each on-screen button performs). Settings persist in `localStorage`.
 
-- **PS5 DualSense / gamepads** (standard mapping): left stick move (full tilt or L3/L2 runs), right stick aim, R2 fire, L1 grenade, □ reload, ✕ use, ○ heal, △ frenzy, R1 / D-pad ←→ switch weapon, D-pad ↑ flashlight, Create inventory, touchpad upgrades, Options pause. Rumble on shots, hits and explosions. Menus: D-pad/left stick to move, ✕ select, ○ back. Xbox pads get Xbox labels.
-- **Mobile / touch**: floating left move stick, floating right aim stick that fires past half tilt, remappable buttons, tap weapon icons to switch, BAG / SHOP / II on top. Starting a game goes fullscreen landscape where allowed.
+- **PS5 DualSense / gamepads** (standard mapping): left stick move (L3 run), right stick aim, R2 fire, L1 throw, ✕ use-or-jump (contextual), ○ jump, □ reload (hold: place mine), △ next throwable (hold: heal), R1 next weapon, L2 last weapon, D-pad weapon slots, R3 frenzy, Create inventory, Options pause. Rumble on shots, hits and explosions. Menus: ✕ select, ○ back.
+- **Mobile / touch**: floating move and aim sticks, large JUMP / NADE (hold to switch throwable) buttons; USE, RELOAD and HEAL appear only when they apply; ≡ holds pause, bag, mine, flashlight. Separate portrait layout; tactical auto-reload when it's quiet.
 - **Legacy shooting mode** (menu or Settings → Gameplay): hold **F** on PC, **R2** on a controller, or the **FIRE** button on mobile to lock onto the closest visible zed in weapon range and keep firing. Each shot rolls a weighted hit chance (weapon class, distance vs. range, standing/walking/running, target size, rushing, Frenzy, and a pity bonus after misses), shown on the lock-on reticle. Frenzy moved to **V** so F is free.
 
 Default keyboard/mouse:
@@ -58,6 +83,9 @@ Default keyboard/mouse:
 | Tab | inventory, herb mixing, gunpowder → ammo crafting |
 | B | weapon upgrades (paid with coins from kills) |
 | F | Legacy auto-fire (legacy mode) |
+| T | Toggle throwable |
+| N | Place mine |
+| Space | Jump |
 | V | Frenzy when the meter is full (activates the class's Frenzy perks) |
 | L / M / Esc | flashlight / mute / pause |
 

@@ -99,3 +99,14 @@ Evac/Rescue use a helicopter (`tlcr::app::vehicles::Heli`, `heli` sprites, radio
 | Friendly NPCs: `Soilder` markers (object name "Soldier") = soldiers, `Survivor` = civilians [INF from `NPCAI`/`Squad`/`Downed` components and `say_*` bark tables]. Names from `boy_names`/`girl_names` [OBS] | Yes: soldiers join your squad and fight, survivors call for help (`say_caged_help`) until rescued (`say_caged_free`), both can be downed and revived (`say_help_downed`, `quick_thanks`, `leader_down`) |
 | Zed `rush` lunge attack | Present in data, **disabled** by design choice |
 | Multiplayer, map editor, FMOD event graph, elevators (switch `link_id`), evac heli, bosses' special attacks | **Not reproduced** |
+
+## 11. Remake additions beyond the original (design choices)
+
+| Feature | Notes |
+|---|---|
+| Lobby, round cycle, host pick / vote, spectate & door deploy | Single-player stand-in for the original's hosted server flow (`host_panel`, `start_vote` strings) |
+| Persistent coins, weapon unlocks, permanent upgrades, inventory upgrades | Payout = kills, time alive, objective, difficulty |
+| Typed ammo slots, separate throwables pouch | Inventory model chosen for the remake |
+| Hitscan shooting with impact effects, recoil bloom, falloff | Original fires visible projectiles |
+| Balance pass (melee tiers, pellet damage split, outlier fixes) | Upgrade levels rescaled to match |
+| Spawns only from MobSpawn rects; windows passable to infected | Matches the original map markers |

@@ -87,6 +87,37 @@
     .bind, .tab, .up { min-height: 40px; }
     .cell { min-width: 100px; }
   }
+  h1.win { color: #7dff8a; }
+  .select-grid { display: grid; grid-template-columns: 200px 1fr; gap: 16px; align-items: start; }
+  .survivor { background: radial-gradient(circle at 50% 40%, #2a2f3a, #10131a); border: 1px solid #333842; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .survivor canvas.big { width: 144px; height: 144px; image-rendering: pixelated; }
+  .survivor .name { font-size: 22px; letter-spacing: 2px; min-width: 80px; }
+  .survivor .pick.small { margin-top: 0; padding: 6px 12px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+  .card { background: #15181e; border: 1px solid #333842; color: #ddd; padding: 10px; text-align: left; display: flex; flex-direction: column; gap: 8px; transition: transform .12s, border-color .12s, box-shadow .12s; }
+  .card:hover { transform: translateY(-2px); border-color: #777; }
+  .card.on { border-color: #ffd36b; box-shadow: 0 0 0 2px #ffd36b55, 0 8px 24px #000a; background: #211d12; }
+  .card-head { display: flex; gap: 10px; align-items: center; }
+  .card-head b { font-size: 22px; letter-spacing: 2px; display: block; }
+  .card-head small { color: #9aa; font-family: system-ui, sans-serif; font-size: 12px; }
+  .stats { display: grid; gap: 3px; }
+  .stat { display: grid; grid-template-columns: 74px 1fr; align-items: center; gap: 6px; font-family: system-ui, sans-serif; font-size: 11px; color: #aab; }
+  .stat i { display: block; height: 7px; background: linear-gradient(90deg, #ffd36b var(--v), #2a2e36 var(--v)); border-radius: 2px; }
+  .kit { display: flex; gap: 4px; }
+  .kit span { background: #0d0f13; border: 1px solid #2a2e36; padding: 2px; }
+  .kit canvas.icon { width: 28px; height: 28px; }
+  ul.perks.mini { columns: 1; margin: 0; padding-left: 14px; font-size: 11px; }
+  ul.perks.mini small { color: #889; }
+  .cell.sel { border-color: #ffd36b; }
+  table.pay td:last-child { text-align: right; color: #ffd36b; }
+  table.pay tr.total td { font-weight: bold; font-size: 16px; color: #7dff8a; }
+  @media (max-width: 760px) { .select-grid { grid-template-columns: 1fr; } .survivor canvas.big { width: 112px; height: 112px; } }
+  .returning { display: flex; gap: 24px; align-items: center; justify-content: center; background: radial-gradient(circle at 20% 50%, #232a35, #10131a); border: 1px solid #333842; padding: 16px; margin: 10px 0; text-align: left; }
+  .returning canvas.big { width: 144px; height: 144px; image-rendering: pixelated; }
+  .cell.empty { border-style: dashed; opacity: .5; justify-content: center; }
+  .cell.tall b { font-size: 17px; letter-spacing: 1px; }
+  .cell.tall small { text-align: center; }
+  @media (max-width: 760px) { .returning { flex-direction: column; text-align: center; } }
 </style>
 </head>
 <body>

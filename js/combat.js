@@ -12,10 +12,10 @@ export function slotFor(item) {
 }
 
 export class WeaponSlot {
-  constructor(item, data, mag) {
+  constructor(item, data, mag, ups) {
     this.item = item;
     this.data = data;
-    this.ups = {};
+    this.ups = ups || {}; // shared with the profile => upgrades are permanent
     this.mag = mag ?? item['max-mag'];
     this.cd = 0;
   }
@@ -88,7 +88,8 @@ export class Projectiles {
           if (pl.alive && Math.hypot(pl.x - p.x, pl.y - 10 - p.y) < 9) {
             p.dead = true;
             g.hurtPlayer(p.dmg, p.webbed ? 'web' : 'acid');
-            if (p.webbed) g.webbed = 1.5;
+            if (p.grab && g.ext) g.ext.grabbed(p.grab);
+            else if (p.webbed) g.webbed = 1.5;
             g.fx.spawn('acid-half-explode', p.x, p.y, { dir: 'e' });
           }
           continue;
@@ -153,6 +154,33 @@ export class Projectiles {
   }
 }
 
+// Per-class recoil bloom added per shot (radians) and damage multipliers (balance pass).
+export const BLOOM = { handgun: 0.012, magnum: 0.03, smg: 0.009, ar: 0.008, lmg: 0.007, shotgun: 0.02, rifle: 0.04, special: 0.005, bow: 0.02 };
+export const CLASS_DMG = {};
+
+// Instant ray: walks the line, stops at walls, damages up to pierce+1 mobs, with range falloff.
+export function hitscan(g, o) {
+  const map = g.map, cos = Math.cos(o.a), sin = Math.sin(o.a);
+  const hit = new Set();
+  for (let d = 6; d <= o.range; d += 4) {
+    const x = o.x + cos * d, y = o.y + sin * d;
+    if (map.blocksShot(Math.floor(x / T), Math.floor(y / T))) {
+      g.fx.spawn('bwallhit', x - cos * 3, y - sin * 3, { scale: 0.6 });
+      if (Math.random() < 0.2) play.ricochet(x, y);
+      return;
+    }
+    for (const m of g.mobs) {
+      if (!m.alive || hit.has(m)) continue;
+      if (Math.abs(m.x - x) > m.radius + 2 || Math.abs(m.cy - y) > m.radius + 6) continue;
+      hit.add(m);
+      const fall = o.pellet ? 1 - 0.5 * Math.min(1, d / o.range) : d > o.range * 0.7 ? 1 - 0.4 * ((d - o.range * 0.7) / (o.range * 0.3)) : 1;
+      g.damageMob(m, o.dmg * fall, { vx: cos, vy: sin, ang: o.a, crit: o.crit, critMul: o.critMul, stun: o.stun });
+      g.fx.spawn(o.pellet ? 'hitpoof' : 'blood-explode', x, y, { scale: o.pellet ? 0.45 : 0.35 });
+      if (o.pierce >= 0 && hit.size > o.pierce) return;
+    }
+  }
+}
+
 // ---------- Firing ----------
 export function fireWeapon(g, slot, ax, ay) {
   const pl = g.player, it = slot.item;
@@ -161,6 +189,10 @@ export function fireWeapon(g, slot, ax, ay) {
   const perk = g.perkMods(slot);
 
   if (slot.isMelee) {
+    // swings cost stamina; exhausted swings are weaker
+    const tired = pl.stamina < 8;
+    pl.stamina = Math.max(0, pl.stamina - 8);
+    if (tired) perk.dmg *= 0.6;
     const reach = (it.range || 32) + 22;
     let hits = 0;
     for (const m of g.mobs) {
@@ -202,14 +234,27 @@ export function fireWeapon(g, slot, ax, ay) {
   const wobble = (pl.moving ? 0.07 : 0.025) * (pl.running ? 2 : 1);
   const explosive = EXPLOSIVE_CLASSES.has(it.class);
   const flame = it.class === 'thrower' ? (/acid/i.test(it.name) ? 'thrower-acid' : /freeze/i.test(it.name) ? 'thrower-freeze' : 'thrower-flames') : null;
+  // recoil bloom: sustained fire widens the cone; it recovers while you pause
+  const now = g.time || 0;
+  slot.bloom = Math.max(0, (slot.bloom || 0) - (now - (slot.lastShot || 0)) * 0.35) + (BLOOM[it.class] ?? 0.012);
+  slot.lastShot = now;
+  const bloom = Math.min(0.14, slot.bloom);
+  // pellet weapons split 1.6x the listed damage across pellets (a full point-blank hit)
+  const dmg = slot.stat('damage') * perk.dmg * (explosive ? perk.explosive : 1) * (CLASS_DMG[it.class] ?? 1) * (pellets > 1 ? 1.6 / pellets : 1);
   for (let i = 0; i < pellets; i++) {
     const off = pellets > 1 ? (i / (pellets - 1) - 0.5) * spreadRad * 2 : 0;
-    const a = ang + off + (Math.random() - 0.5) * wobble * 2;
+    const a = ang + off + (Math.random() - 0.5) * (wobble + bloom) * 2;
     const speed = flame ? 260 : it.speed || 480;
+    if (!explosive && !flame) {
+      // hitscan: no visible projectile, just impacts where the round lands
+      hitscan(g, { x: ox, y: oy, a, range: it.range || 320, dmg, pierce: it.pierce ?? 0,
+        crit: perk.crit + (it['crit-chance'] || 0), critMul: it['crit-damage'] || 2, stun: perk.stun || it['stun-chance'] || 0, pellet: pellets > 1 });
+      continue;
+    }
     g.projectiles.bullet({
       x: ox + Math.cos(ang) * 4, y: oy + Math.sin(ang) * 4,
       vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
-      range: flame ? 110 : it.range || 320, dmg: slot.stat('damage') * perk.dmg * (explosive ? perk.explosive : 1),
+      range: flame ? 110 : it.range || 320, dmg,
       pierce: it.pierce ?? 0, crit: perk.crit + (it['crit-chance'] || 0), critMul: it['crit-damage'] || 2,
       stun: perk.stun || it['stun-chance'] || 0, flame,
       explode: explosive, radius: (it.class === 'rocket-launcher' ? 96 : 64) * perk.radius,

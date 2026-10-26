@@ -109,6 +109,7 @@ export class Mob {
     this.rushV = null;
     this.hitDone = false;
     this.groan = 2 + Math.random() * 8;
+    this.atlas = atlas;
     this.layers = Mob.layersFor(def, atlas, outfits);
     this.radius = this.boss ? 18 : def.speed >= 100 ? 7 : 8;
   }
@@ -140,14 +141,15 @@ export class Mob {
   get cy() { return this.y - 10; }
 
   move(map, dx, dy) {
-    if (dx && !map.boxHits(this.x + dx, this.y, this.hw, this.hh)) this.x += dx;
+    if (dx && !map.boxHits(this.x + dx, this.y, this.hw, this.hh, false, true)) this.x += dx;
     else if (dx) return false;
-    if (dy && !map.boxHits(this.x, this.y + dy, this.hw, this.hh)) this.y += dy;
+    if (dy && !map.boxHits(this.x, this.y + dy, this.hw, this.hh, false, true)) this.y += dy;
     else if (dy) return false;
     return true;
   }
 
   draw(ctx, atlas) {
+    atlas = this.atlas || atlas;
     let anims;
     if (!this.alive) anims = ['death', 'walk'];
     else if (this.state === 'attack') anims = ['battack', 'walk'];

@@ -45,6 +45,15 @@ for (const n of ['all_infecteds', 'core_custom', 'combat_anims', 'all_lights']) 
   write('img/' + n + '.json', compact(path.join(A, n + '.json')));
   fs.copyFileSync(path.join(A, n + '.png'), path.join(OUT, 'img', n + '.png'));
 }
+// Mech robots ship as separate Aseprite exports (assets/robots/*.json + png)
+const robots = [];
+for (const f of fs.readdirSync(path.join(A, 'robots')).filter((f) => f.endsWith('.json'))) {
+  const n = f.replace(/.json$/, '');
+  write('img/robots/' + n + '.json', compact(path.join(A, 'robots', f)));
+  fs.copyFileSync(path.join(A, 'robots', n + '.png'), path.join(OUT, 'img', 'robots', n + '.png'));
+  robots.push(n);
+}
+write('img/robots/index.json', robots);
 for (const n of ['all_tilesets-0', 'all_tilesets-1']) fs.copyFileSync(path.join(A, 'map_editor', n + '.png'), path.join(OUT, 'img', n + '.png'));
 fs.copyFileSync(path.join(A, 'titlescreen.png'), path.join(OUT, 'img', 'titlescreen.png'));
 fs.copyFileSync(path.join(A, 'BebasNeue-Regular.ttf'), path.join(OUT, 'img', 'BebasNeue-Regular.ttf'));

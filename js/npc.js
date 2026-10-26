@@ -1,6 +1,7 @@
 import { Player, dirOf, cellOf, WALK, RUN } from './actors.js';
 import { T } from './map.js';
 import { play } from './sfx.js';
+import { hitscan } from './combat.js';
 
 // Friendly humans from the original map markers: "Soilder" (object name "Soldier") spawns armed
 // soldiers that join your squad when you reach them; "Survivor" spawns civilians who call for help
@@ -164,9 +165,7 @@ function npcFire(game, n, t) {
   const pellets = Math.max(1, it.spread || 1), spread = ((it['spread-angle'] || 0) * Math.PI) / 180;
   for (let i = 0; i < pellets; i++) {
     const off = pellets > 1 ? (i / (pellets - 1) - 0.5) * spread * 2 : 0;
-    const sp = it.speed || 480;
-    game.projectiles.bullet({ x: ox + Math.cos(a) * 4, y: oy + Math.sin(a) * 4, vx: Math.cos(a + off) * sp, vy: Math.sin(a + off) * sp,
-      range: it.range || 320, dmg: it.damage * 0.75, pierce: it.pierce ?? 0, crit: 0, element: 'reg' });
+    hitscan(game, { x: ox, y: oy, a: a + off, range: it.range || 320, dmg: it.damage * 0.75, pierce: it.pierce ?? 0, crit: 0, pellet: pellets > 1 });
   }
   n.recoilT = 0.08;
   n.flashT = 0.06;
