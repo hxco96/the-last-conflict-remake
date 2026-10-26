@@ -50,7 +50,7 @@ export class Session {
     this.lobby.onStorage = () => this.ui.storage();
     this.lobby.onDeploy = () => this.deploy();
     this.lobby.msg('Welcome to the base. Gear up at the tables, upgrade with the merchant, vote at the mission board.', '#9cd4ff');
-    music('Save Room(RE0)');
+    music('Sake');
   }
 
   get active() { return this.view === 'lobby' ? this.lobby : this.match || this.lobby; }
@@ -171,7 +171,7 @@ export class Session {
     const lb = this.lobby;
     lb.ammo.slots.length = 0; lb.throwables.counts.clear(); lb.throwables.sel = null; lb.items.clear();
     lb.applyLoadout(lb.classLoadout());
-    music('Save Room(RE0)');
+    music('Sake');
     if (summary.deployed) this.ui.results(summary);
     else if (result === 'abandoned') lb.msg('The round ended — nobody deployed.', '#ffb0b0');
   }

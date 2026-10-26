@@ -135,4 +135,6 @@ for (const [bank, kind] of [['sfx.bank', 'sfx'], ['music.bank', 'music']]) {
   }
   console.log('audio', kind, audio[kind].length, 'files');
 }
+// custom tracks added by hand (not in the original banks) live next to the exported ones
+for (const t of [{ name: 'Sake', file: 'music/sake.m4a' }]) if (fs.existsSync(path.join(OUT, 'audio', t.file))) audio.music.push({ ...t, dur: 0, ch: 2, rate: 44100, loop: null, custom: true });
 write('audio/index.json', audio);
