@@ -2,7 +2,7 @@
 // BROKER: your own PeerJS signaling server (see server/ and render.yaml). Leave null to use the free public
 // PeerJS cloud only. When set, it is tried first and the public cloud is the fallback.
 // Example after deploying to Render: { host: 'tlcr-peer.onrender.com', port: 443, path: '/', secure: true }
-export const BROKER = null;
+export const BROKER = { host: 'tlcr-peer.onrender.com', port: 443, path: '/', secure: true };
 
 // ICE servers: STUN finds your public address, TURN relays traffic when a direct connection is
 // impossible (strict NATs, mobile data). These are the free public Open Relay servers; replace
