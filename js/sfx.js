@@ -2,6 +2,8 @@
 // played through Web Audio with distance attenuation and stereo pan. A tiny synth fills in only
 // while a sample is still loading or if a browser cannot decode Ogg Vorbis.
 
+import { perf } from './perf.js';
+
 export const sfx = { muted: false, master: 0.9, sfxVol: 0.9, musicVol: 0.45, listener: { x: 0, y: 0 } };
 
 let ac = null, master = null, sfxBus = null, noise = null;
@@ -79,8 +81,12 @@ export function group(re) {
 
 // Ambient voices (zed moans) yield to the siren and radio: a duck level during warn/horde phases and
 // a cap on how many play at once, so 200 zeds don't turn into noise that hides the warnings.
-let ambDuck = 0, ambVoices = 0;
+let ambDuck = 0, ambVoices = 0, liveVoices = 0;
 const AMB_MAX = 8;
+// Every playing sample is a node chain the audio thread has to mix; a swarm biting at once piles up dozens and
+// costs more frame time than all the sprites. World sounds yield past a cap (lower on a slow device), and the same
+// sample can't restart within 45 ms. UI sounds and the player's own are never dropped.
+const VOICE_MAX = 22;
 export function ambientDuck(v) { ambDuck = v; }
 
 // Play one sample (or a random one from a list). opts: vol, x/y (world position), rate, spread, gap.
@@ -90,7 +96,10 @@ export function sample(names, opts = {}) {
   if (!list.length) return false;
   const name = list[Math.floor(Math.random() * list.length)];
   const now = ac.currentTime;
-  if (opts.gap && now - (recent.get(name) || -9) < opts.gap) return true;
+  if (ac.state !== 'running') liveVoices = ambVoices = 0; // a suspended context never fires onended: don't let the counters leak
+  const world = opts.x !== undefined;
+  if ((opts.gap || (world ? 0.045 : 0)) && now - (recent.get(name) || -9) < (opts.gap || 0.045)) return true;
+  if (world && liveVoices >= (perf.dropped ? Math.round(VOICE_MAX * Math.max(0.4, perf.scale)) : VOICE_MAX)) return true;
   let vol = opts.vol ?? 1, pan = 0;
   if (opts.x !== undefined) {
     const dx = opts.x - sfx.listener.x, dy = opts.y - sfx.listener.y, d = Math.hypot(dx, dy);
@@ -99,7 +108,7 @@ export function sample(names, opts = {}) {
     vol *= Math.pow(1 - d / range, 1.6);
     pan = Math.max(-0.8, Math.min(0.8, dx / 320));
   }
-  if (opts.amb) { if (ambVoices >= AMB_MAX) return true; vol *= 1 - ambDuck; }
+  if (opts.amb) { if (ambVoices >= (perf.dropped ? 4 : AMB_MAX)) return true; vol *= 1 - ambDuck; }
   if (vol < 0.01) return true;
   const buf = buffers.get(name);
   if (!(buf instanceof AudioBuffer)) { load(name); return false; }
@@ -112,7 +121,9 @@ export function sample(names, opts = {}) {
   let node = src.connect(g);
   if (pan && ac.createStereoPanner) { const p = ac.createStereoPanner(); p.pan.value = pan; node = node.connect(p); }
   node.connect(sfxBus);
-  if (opts.amb) { ambVoices++; src.onended = () => { ambVoices--; }; }
+  liveVoices++;
+  src.onended = () => { liveVoices--; if (opts.amb) ambVoices--; };
+  if (opts.amb) ambVoices++;
   src.start(now + (opts.delay || 0));
   return true;
 }

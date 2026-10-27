@@ -7,6 +7,7 @@
 // roster of recurring defenders) is saved per map in localStorage; dying costs scrap and you retry the
 // same night. Infected never spawn inside buildings: they come from the outdoor edges only.
 import { T } from './map.js';
+import { perf } from './perf.js';
 import { cellOf } from './actors.js';
 import { NPC, randomLook } from './npc.js';
 import { play, sample, music, siren } from './sfx.js';
@@ -418,6 +419,18 @@ export class Siege {
     const g = this.g, w = this.wave;
     this.nightT += dt;
     for (const m of g.mobs) m.seen = true; // they all know where the light is
+    // zeds parked at a barricade or wedged outdoors must not hold the wave (or the night) hostage:
+    // retire any that has not moved for 25 s out of sight (60 s in sight), and leave the stalled ones out of the spawn cap
+    let stalled = 0;
+    for (const m of g.mobs) {
+      if (!m.alive || m.boss) continue;
+      if (m._ix === undefined || Math.abs(m.x - m._ix) + Math.abs(m.y - m._iy) > 6) { m._ix = m.x; m._iy = m.y; m.idleT = 0; continue; }
+      if (m.state === 'attack') { m.idleT = 0; continue; }
+      m.idleT += dt;
+      if (m.idleT > 8) stalled++;
+      if (m.idleT > 60) { g.damageMob(m, 99999, { ang: 0 }); stalled--; continue; } // wedged where the player can see it: put it down
+      if (m.idleT > 25 && !(g.cam && m.x > g.cam.x - 24 && m.x < g.cam.x + g.cam.vw + 24 && m.y > g.cam.y - 24 && m.y < g.cam.y + g.cam.vh + 48)) { m.alive = false; m.deadT = 9; stalled--; }
+    }
     const alive = g.mobs.filter((m) => m.alive).length;
     if (w && w.lull > 0) {
       w.lull -= dt;
@@ -426,8 +439,8 @@ export class Siege {
     }
     if (w.left > 0) {
       w.spawnT -= dt;
-      const cap = Math.min(80, 14 + this.c.night * 3) * g.density;
-      if (w.spawnT <= 0 && alive < cap) {
+      const cap = Math.min(Math.min(80, 14 + this.c.night * 3) * g.density, perf.maxAlive);
+      if (w.spawnT <= 0 && (alive - stalled < cap || (w.t > 60 && alive < perf.maxAlive * 1.5))) { // after a minute the wave pushes on regardless of the cap
         w.spawnT = Math.max(0.25, 0.9 - this.c.night * 0.04) / Math.sqrt(g.density);
         const f = w.fronts[w.front++ % w.fronts.length];
         const boss = this.plan.boss && w.idx === this.plan.waves.length - 1 && w.left === 1;

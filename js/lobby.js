@@ -38,11 +38,28 @@ export class LobbyExt {
     const map = g.map;
     const sp = (map.markers.PlayerSpawn || [])[0] || { x: g.player.x, y: g.player.y };
     this.spawn = { x: sp.x + 16, y: sp.y + 24 };
+    this.clearSpawnLane(sp);
     this.placeFixtures();
     this.stock();
   }
 
   // ---------- layout ----------
+  // Crates stand right in front of the spawn, so a new player holding up just stops against them. Slide the spawn
+  // sideways to the nearest column that is open for the four cells ahead (doors and fences are ignored: the gate removes them; the markers move too, so respawns match).
+  clearSpawnLane(marker) {
+    const g = this.g, map = g.map, cx = Math.floor(this.spawn.x / T), cy = Math.floor(this.spawn.y / T);
+    const open = (x) => [1, 2, 3, 4].every((k) => !map.solid[map.idx(x, cy - k)]);
+    if (open(cx)) return;
+    for (let d = 1; d < 8; d++) for (const x of [cx + d, cx - d]) {
+      if (!open(x) || map.solid[map.idx(x, cy)]) continue;
+      const near = Math.hypot(g.player.x - this.spawn.x, g.player.y - this.spawn.y) < T;
+      marker.x += (x - cx) * T;
+      this.spawn.x += (x - cx) * T;
+      if (near) { g.player.x = this.spawn.x; g.player.y = this.spawn.y; }
+      return;
+    }
+  }
+
   tableSet() {
     const s = this.g.map.sets.find((x) => x.name === 'indoor_furniture_tables');
     return s ? { first: s.first } : null;

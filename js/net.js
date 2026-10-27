@@ -95,6 +95,7 @@ export class Net {
 
   on(type, f) { this.handlers.set(type, f); }
   dispatch(from, msg) {
+    if (from === 'H') this.heardAt = performance.now(); // client: last time the host said anything
     const f = this.handlers.get(msg.t);
     if (f) { try { f(msg, from); } catch (e) { console.error('net handler', msg.t, e); } }
   }

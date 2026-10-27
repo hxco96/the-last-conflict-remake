@@ -68,11 +68,13 @@ export class Atlas {
     if (!flip) {
       ctx.drawImage(this.image, fx, fy, fw, fh, Math.round(left + ox * scale), Math.round(top + oy * scale), fw * scale, fh * scale);
     } else {
-      ctx.save();
-      ctx.translate(Math.round(x), 0);
+      // undo the mirror by hand instead of save()/restore(): this runs per layer per zed, and the state stack is the costly part
+      const rx = Math.round(x);
+      ctx.translate(rx, 0);
       ctx.scale(-1, 1);
       ctx.drawImage(this.image, fx, fy, fw, fh, Math.round(-(sw * scale) / 2 + ox * scale), Math.round(top + oy * scale), fw * scale, fh * scale);
-      ctx.restore();
+      ctx.scale(-1, 1);
+      ctx.translate(-rx, 0);
     }
   }
 

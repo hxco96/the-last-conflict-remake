@@ -437,33 +437,41 @@ export class Game {
     // every map). Uniform pick, never on screen, never close, never in a sealed room.
     let cells = this.spawnCells(this.map);
     // rects walled off from the playable area (e.g. Hospital's river strip): use the outer ring instead
-    if (!this.ghost && cells.length && this.flow.dist.some((d) => d !== -1) && !cells.some(([x, y]) => this.flow.dist[y * this.map.w + x] !== -1)) {
-      if (!this.map._ringCells || !this.map._ringCells.length) {
-        // outer ring of the area the player can actually reach (6 cells in from its bounding box)
-        const W = this.map.w, reach = [];
-        let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
-        this.flow.dist.forEach((d, i) => { if (d === -1) return; const x = i % W, y = (i / W) | 0; if (this.map.blocking(x, y)) return; reach.push([x, y]); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); });
-        const ring = reach.filter(([x, y]) => Math.min(x - x0, x1 - x, y - y0, y1 - y) < 6);
-        this.map._ringCells = ring.some(([x, y]) => !this.map.isInterior(x, y)) ? ring.filter(([x, y]) => !this.map.isInterior(x, y)) : ring;
-      }
-      cells = this.map._ringCells;
-    }
+    if (!this.ghost && cells.length && this.flow.dist.some((d) => d !== -1) && !cells.some(([x, y]) => this.flow.dist[y * this.map.w + x] !== -1)) cells = this.reachRing();
     if (!cells.length) return null;
     const pl = this.player, cam = this.cam, map = this.map;
     const mates = this.coop ? this.coop.targets(this) : [];
-    for (let i = 0; i < 16; i++) {
-      const [cx, cy] = cells[(Math.random() * cells.length) | 0];
-      const x = cx * T + 16, y = cy * T + 24;
-      if (mates.some((a) => Math.hypot(x - a.x, y - a.y) < 420)) continue;
-      if (!this.ghost) {
-        if (Math.hypot(x - pl.x, y - pl.y) < 480) continue;
-        if (cam && x > cam.x - 48 && x < cam.x + cam.vw + 48 && y > cam.y - 48 && y < cam.y + cam.vh + 64) continue;
-        if (this.flow.dist[cy * map.w + cx] === -1) continue;
+    const tryCells = (list) => {
+      for (let i = 0; i < 16; i++) {
+        const [cx, cy] = list[(Math.random() * list.length) | 0];
+        const x = cx * T + 16, y = cy * T + 24;
+        if (mates.some((a) => Math.hypot(x - a.x, y - a.y) < 420)) continue;
+        if (!this.ghost) {
+          if (Math.hypot(x - pl.x, y - pl.y) < 480) continue;
+          if (cam && x > cam.x - 48 && x < cam.x + cam.vw + 48 && y > cam.y - 48 && y < cam.y + cam.vh + 64) continue;
+          if (this.flow.dist[cy * map.w + cx] === -1) continue;
+        }
+        if (map.blocking(cx, cy)) continue;
+        return { x, y };
       }
-      if (map.blocking(cx, cy)) continue;
-      return { x, y };
+      return null;
+    };
+    const p = tryCells(cells);
+    // a map whose MobSpawn rects are tiny or sit on the player start (Basement) would never spawn anything: fall back to the reachable outer ring
+    if (!p && !this.ghost && cells.length <= 60) { const ring = this.reachRing(); if (ring.length) return tryCells(ring); }
+    return p;
+  }
+
+  // Outer ring of the area the player can actually reach (6 cells in from its bounding box).
+  reachRing() {
+    if (!this.map._ringCells || !this.map._ringCells.length) {
+      const W = this.map.w, reach = [];
+      let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+      this.flow.dist.forEach((d, i) => { if (d === -1) return; const x = i % W, y = (i / W) | 0; if (this.map.blocking(x, y)) return; reach.push([x, y]); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); });
+      const ring = reach.filter(([x, y]) => Math.min(x - x0, x1 - x, y - y0, y1 - y) < 6);
+      this.map._ringCells = ring.some(([x, y]) => !this.map.isInterior(x, y)) ? ring.filter(([x, y]) => !this.map.isInterior(x, y)) : ring;
     }
-    return null;
+    return this.map._ringCells;
   }
 
   // Spawn cells for a floor: its MobSpawn rects, else the outer ring reachable from the border
@@ -500,7 +508,8 @@ export class Game {
     // bigger hordes for bigger squads (Left 4 Dead style: +60% per extra survivor)
     const squad = 1 + (this.coop ? this.coop.targets(this).length : 0);
     let [cap, interval] = this.dir.spawnTuning(Math.min(8 + this.time / 8, 50) * (this.diff ? this.diff.spawn : 1), Math.max(0.5, 2.2 - this.time / 200));
-    cap *= (1 + 0.6 * (squad - 1)) * this.density * perf.scale; // perf.scale shrinks the horde when this device can't keep up
+    cap = Math.min(cap * (1 + 0.6 * (squad - 1)) * this.density * perf.scale, perf.maxAlive * (1 + 0.3 * (squad - 1))); // perf shrinks the horde when this device can't keep up
+    if (perf.dropped) this.cullFar(alive, cap);
     this.spawnT = this.density > 1 ? interval / Math.sqrt(this.density) : interval;
     if (alive >= cap) return;
     const open = this.groups.filter((g) => this.time >= g.unlock);
@@ -522,6 +531,21 @@ export class Game {
         if (m && m.boss) { this.msg('A ' + def.name + ' has appeared!', '#ff4b4b'); music('Plant 42 - Boss Theme RE'); play.radio(); }
       }
     }
+  }
+
+  // Slow device: quietly retire the zeds furthest from every survivor and off screen until the horde fits the cap again.
+  cullFar(alive, cap) {
+    if (alive <= cap * 1.15 + 6) return;
+    const cam = this.cam, tg = [this.player, ...(this.coop ? this.coop.targets(this) : [])];
+    const far = [];
+    for (const m of this.mobs) {
+      if (!m.alive || m.boss || m.elite || m.state === 'attack') continue;
+      if (cam && m.x > cam.x - 64 && m.x < cam.x + cam.vw + 64 && m.y > cam.y - 64 && m.y < cam.y + cam.vh + 96) continue;
+      const d = Math.min(...tg.map((t) => Math.hypot(m.x - t.x, m.y - t.y)));
+      if (d > 520) far.push([d, m]);
+    }
+    far.sort((a, b) => b[0] - a[0]);
+    for (const [, m] of far.slice(0, Math.max(3, Math.ceil((alive - cap) / 6)))) { m.alive = false; m.deadT = 9; }
   }
 
   // ---------- combat callbacks ----------
@@ -963,6 +987,7 @@ export class Game {
       for (const n of this.npcs) updateNPC(this, n, dt);
       this.separateHumans();
       this.separateMobs();
+      this.unwedgeMobs(dt);
       this.mobs = this.mobs.filter((m) => m.alive || m.deadT < 2);
     }
     this.projectiles.update(dt);
@@ -1357,6 +1382,20 @@ export class Game {
     c.t = a.cd;
   }
 
+  // Safety net: a zed whose body overlaps wall (pushed there by a closing door, a rebuilt barricade or a crowd)
+  // is moved to the nearest open floor. Open window cells are not walls to a zed, so those are left alone.
+  unwedgeMobs(dt) {
+    this._wedgeT = (this._wedgeT || 0) - dt;
+    if (this._wedgeT > 0) return;
+    this._wedgeT = 1;
+    const map = this.map;
+    for (const m of this.mobs) {
+      if (!m.alive || !map.boxHits(m.x, m.y, m.hw, m.hh, false, true)) continue;
+      const p = map.randomWalkable({ x: m.x - 48, y: m.y - 48, w: 96, h: 96 });
+      if (p) { m.x = p.x; m.y = p.y; }
+    }
+  }
+
   separateMobs() {
     const live = this.mobs.filter((m) => m.alive);
     const grid = new Map();
@@ -1428,7 +1467,7 @@ export class Game {
     for (const d of map.doors) if (inView(d.x, d.y)) list.push([d.y + 30, () => map.drawDynamic(ctx, d)]);
     for (const c of map.cades) if (inView(c.x, c.y)) list.push([c.y + 30, () => map.drawDynamic(ctx, c)]);
     for (const p of this.pickups) if (inView(p.x, p.y)) list.push([p.y, () => this.drawPickup(ctx, p)]);
-    for (const m of this.mobs) if (inView(m.x, m.y)) list.push([m.alive ? m.y : m.y - 40, () => { if (m.elite && m.alive) this.dir.drawElite(ctx, m); m.draw(ctx, this.atlas.infected); }]);
+    for (const m of this.mobs) if (inView(m.x, m.y)) list.push([m.alive ? m.y : m.y - 40, () => { if (m.elite && m.alive) this.dir.drawElite(ctx, m); m.draw(ctx, this.atlas.infected, perf.lite); }]);
     if (!this.ghost) list.push([pl.y, () => pl.draw(ctx, this.atlas.core, () => this.drawHeldWeapon(ctx))]);
     if (this.ext && this.ext.drawables) this.ext.drawables(list, ctx);
     if (this.coop) this.coop.drawAvatars(this, list, ctx, inView);
