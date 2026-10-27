@@ -6,6 +6,7 @@ import { Session } from './session.js';
 import { Profile, SLOT_UPGRADES, DIFFICULTY, ZOMBIE_COUNT } from './profile.js';
 import { tierOf, statLine, TIER_COLORS, TIER_NAMES } from './tiers.js';
 import { MODES, THEMES } from './modes.js';
+import { campaignLine } from './siege.js';
 import { LOOKS } from './actors.js';
 import { unlockAudio, sfx, initAudio, music, setMuted, applyVolumes, play, suspendAudio } from './sfx.js';
 import { Net } from './net.js';
@@ -535,7 +536,7 @@ function showBoard() {
     boardTab === 'vote' ? el('p', { class: 'sub left' }, S.coop ? (S.coop.client && S.hostMode ? 'The host is picking this round — your vote is shown to them.' : 'Each player gets one vote per category; the most-voted option wins (ties: host).') : 'Each player gets one vote per category; the most-voted option wins (ties: host). Solo: your vote decides.') : null,
     S.coop ? el('p', { class: 'sub' }, `Room ${S.coop.code} · ${S.coop.count}/4 players — share the code to invite friends.`) : null,
     el('h3', {}, 'Map'), el('div', { class: 'choices' }, ...mapsList.map((i) => chip('map', i, assets.mapIndex[i].name, `${assets.mapIndex[i].w}×${assets.mapIndex[i].h}${assets.mapIndex[i].floors > 1 ? ` · ${assets.mapIndex[i].floors}F` : ''}`))),
-    el('h3', {}, 'Mode'), el('div', { class: 'choices' }, ...Object.keys(MODES).map((k) => chip('mode', k, k, MODES[k].desc))),
+    el('h3', {}, 'Mode'), el('div', { class: 'choices' }, ...Object.keys(MODES).filter((k) => !(MODES[k].solo && S.coop)).map((k) => chip('mode', k, k, k === 'Siege' ? campaignLine(assets.mapIndex[n.map].name) : MODES[k].desc))),
     n.mode === 'Peaceful' ? null : el('h3', {}, 'Spawn theme'),
     n.mode === 'Peaceful' ? null : el('div', { class: 'choices' }, ...Object.keys(THEMES).map((k) => chip('theme', k, k === 'BossRush' ? 'Boss Rush' : k))),
     n.mode === 'Peaceful' ? null : el('h3', {}, 'Zombie count'),

@@ -72,7 +72,7 @@ export class Session {
   // Voting offers exactly the same choices as a host pick.
   makeBallot() {
     const maps = this.assets.mapIndex.map((m, i) => i).filter((i) => this.assets.mapIndex[i].name !== 'Base');
-    return { map: maps, mode: Object.keys(MODES), theme: Object.keys(THEMES), difficulty: Object.keys(DIFFICULTY), density: Object.keys(ZOMBIE_COUNT) };
+    return { map: maps, mode: Object.keys(MODES).filter((k) => !(MODES[k].solo && this.coop)), theme: Object.keys(THEMES), difficulty: Object.keys(DIFFICULTY), density: Object.keys(ZOMBIE_COUNT) };
   }
   vote(cat, value) {
     this.myVote[cat] = value;

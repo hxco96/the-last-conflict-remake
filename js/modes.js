@@ -6,6 +6,7 @@
 import { Atlas } from './assets.js';
 import { T } from './map.js';
 import { play, sample, loop, music } from './sfx.js';
+import { Siege } from './siege.js';
 
 // Mode names come from the exe string table; Battle Royale / Death Match are PvP-only.
 export const MODES = {
@@ -14,6 +15,7 @@ export const MODES = {
   Evac: { desc: 'Hold out until the helicopter arrives (3:00), then get to it', heliAt: 180 },
   Rescue: { desc: 'Find and rescue every survivor, then evacuate by helicopter' },
   Peaceful: { desc: 'No infected: explore the map, loot and practice' },
+  Siege: { desc: 'Persistent campaign: fortify a base by day, hold it against a growing horde by night, recruit survivors', solo: true },
 };
 
 // spawn_levels_<theme>.rktd
@@ -33,7 +35,8 @@ export class Extras {
     this.g = g;
     this.mode = g.opts.mode || 'Survival';
     this.cfg = MODES[this.mode] || MODES.Survival;
-    this.noSpawn = this.mode === 'Peaceful';
+    this.siege = this.mode === 'Siege' && !g.coop ? new Siege(g) : null; // solo only
+    this.noSpawn = this.mode === 'Peaceful' || !!this.siege; // the siege runs its own spawner
     this.fires = [];
     this.mines = [];
     this.webs = [];
@@ -63,6 +66,7 @@ export class Extras {
   // ---------- objectives ----------
   objective() {
     const g = this.g;
+    if (this.siege) return this.siege.objective();
     if (this.mode === 'Extermination') return `EXTERMINATE  ${Math.min(g.teamKills || 0, this.cfg.quota)} / ${this.cfg.quota}`;
     if (this.mode === 'Evac' && !this.heli) {
       const left = Math.max(0, this.cfg.heliAt - g.time);
@@ -288,6 +292,7 @@ export class Extras {
     const g = this.g;
     if (g.over) return;
     this.updateWeather(dt);
+    if (this.siege) this.siege.update(dt);
     if (this.noSpawn) {} // Peaceful
     if (this.mode === 'Extermination' && (g.teamKills || 0) >= this.cfg.quota) this.win('Area exterminated!');
     if (this.mode === 'Evac' && !this.heli && g.time >= this.cfg.heliAt) this.callHeli();
@@ -305,6 +310,7 @@ export class Extras {
   // ---------- drawing ----------
   drawGround(ctx) {
     const g = this.g, A = g.atlas.combat;
+    if (this.siege) this.siege.drawGround(ctx);
     for (const w of this.webs) {
       if (w.tile) continue;
       ctx.strokeStyle = `rgba(230,230,230,${Math.min(0.55, w.t / 6)})`;
@@ -359,13 +365,17 @@ export class Extras {
     }
   }
 
+  interactable() { return this.siege ? this.siege.interactable() : null; }
+
   lights(hole) {
+    if (this.siege) this.siege.lights(hole);
     for (const f of this.fires) hole(f.x, f.y - 4, f.r * 2.2, Math.min(0.8, f.t * 0.4));
     if (this.heli) hole(this.heli.x, this.heli.y, 130, 0.7);
   }
 
   drawScreen(ctx, W, H, u) {
     const g = this.g, A = g.atlas.combat;
+    if (this.siege) this.siege.drawScreen(ctx, W, H, u);
     // weather overlay
     if (this.weather !== 'clear' && g.cam) {
       const fr = A.find(this.weather === 'rain' ? 'weather-rain-heavy' : 'weather-snow-heavy', ['default'], ['x']) || A.find('weather-' + this.weather, ['default'], ['x']);
@@ -412,6 +422,7 @@ export class Extras {
   }
 
   stop() {
+    if (this.siege) this.siege.stop();
     if (this.ambient) this.ambient.stop();
     if (this.heliLoop) this.heliLoop.stop();
   }
