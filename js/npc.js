@@ -140,7 +140,7 @@ export function updateNPC(game, n, dt) {
       }
       if (dP > 150) speed = RUN * 0.95;
     }
-  } else if (n.mode === 'guard' && Math.hypot(n.x - n.homeX, n.y - n.homeY) > 24) { tx = n.homeX; ty = n.homeY; }
+  } else if ((n.mode === 'guard' || n.mode === 'post') && Math.hypot(n.x - n.homeX, n.y - n.homeY) > 24) { tx = n.homeX; ty = n.homeY; }
   // survivors back away from zeds that get close
   if (!n.weapon && t && Math.hypot(t.x - n.x, t.y - n.y) < 40) { tx = n.x - (t.x - n.x); ty = n.y - (t.y - n.y); speed = WALK * 0.75; }
   n.moving = tx !== null;
@@ -193,7 +193,7 @@ export function hurtNPC(game, n, dmg) {
 export function reviveNPC(game, n) {
   n.alive = true;
   n.hp = n.maxHp * 0.4;
-  n.mode = n.kind === 'soldier' ? 'follow' : n.mode === 'idle' ? 'follow' : n.mode;
+  n.mode = n.mode === 'post' ? 'post' : n.kind === 'soldier' ? 'follow' : n.mode === 'idle' ? 'follow' : n.mode;
   n.say(game.assets.barks.quick_thanks);
   game.fx.spawn('heal-quick', n.x, n.y - 14);
   play.heal();

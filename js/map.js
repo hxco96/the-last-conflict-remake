@@ -247,7 +247,7 @@ export class GameMap {
     if (!this.inBounds(cx, cy)) return true;
     const i = this.idx(cx, cy);
     const d = this.dyn[i];
-    if (mob && this.breach[i] && !d) return false;
+    if (mob && this.breach[i] && (!d || (d.kind === 'cade' && d.hp <= 0))) return false; // a smashed barricade leaves the window open
     if (airborne && (this.low[i] || (d && d.kind === 'cade'))) return false;
     if (this.solid[i]) return true;
     if (!d) return false;

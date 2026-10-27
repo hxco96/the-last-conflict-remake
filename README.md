@@ -87,6 +87,7 @@ This converts the `.rktd` s-expression tables to JSON. It also decompresses 6 Ti
 ## Game modes & original features
 
 - **Modes** (from the exe's mode table): Survival (endless), Extermination (kill 120), Evac (helicopter arrives at 3:00, stand in the landing ring to escape), Rescue (find every survivor, then evac), Peaceful (no infected). Battle Royale / Death Match are PvP and not included.
+- **Siege (solo, persistent campaign):** hold a fortified building (the sealed interior nearest the spawn) night after night. By day you gather scrap piles, board windows and spend scrap at the workbench (barricades, barracks, armory, field hospital, floodlights); recurring named survivors arrive, defend a post and drift away or fall. At dusk a siren announces the horde's size and the compass sides it comes from, then 3–7 waves hit at night; survive to dawn for scrap, supplies and a bigger next night. Saved per map in the browser (`tlcr-siege-v1`); dying costs 25% scrap and you retry that night. Infected never spawn inside buildings. Code: `js/siege.js`.
 - **Spawn themes** from `spawn_levels_*.rktd`: Zeds, Spiders, Chaos, Mechs (original DRAUGR / LOKI / SKJOLD robot sprites), Boss Rush.
 - **Evac helicopter**: flies in to the map's `EvacZone`/`HeliSpawn` marker with the original radio line, rotor loop and landing wind; an arrow points to it when off-screen.
 - **Boss / mob abilities** from `mob_db`: tongue attacks grab and reel you in (attack or jump to struggle free), spiders lay webs that slow you (plus the maps' WebTrap tiles), the spider queen spawns minions.

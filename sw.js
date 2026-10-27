@@ -1,12 +1,12 @@
 // Offline support. The core game (~9 MB) is cached at install; maps and audio are cached the first
 // time they are played (or all at once via Settings → "Download everything for offline").
 // Bump VERSION whenever files change so installed copies update.
-const VERSION = 'tlcr-v12';
+const VERSION = 'tlcr-v13';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest',
   'js/main.js', 'js/assets.js', 'js/data.js', 'js/game.js', 'js/map.js', 'js/nav.js', 'js/actors.js',
   'js/combat.js', 'js/npc.js', 'js/modes.js', 'js/profile.js', 'js/lobby.js', 'js/session.js', 'js/tiers.js', 'js/input.js', 'js/sfx.js',
-  'js/net.js', 'js/coop.js', 'js/survival.js', 'js/vendor/peerjs.min.js',
+  'js/net.js', 'js/coop.js', 'js/survival.js', 'js/siege.js', 'js/vendor/peerjs.min.js',
   'assets/img/all_infecteds.json', 'assets/img/all_infecteds.png', 'assets/img/core_custom.json', 'assets/img/core_custom.png',
   'assets/img/combat_anims.json', 'assets/img/combat_anims.png', 'assets/img/all_lights.json', 'assets/img/all_lights.png',
   'assets/img/all_tilesets-0.png', 'assets/img/all_tilesets-1.png', 'assets/img/titlescreen.png', 'assets/img/BebasNeue-Regular.ttf',

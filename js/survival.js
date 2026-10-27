@@ -36,7 +36,7 @@ export class Director {
   get minutes() { return this.g.time / 60; }
   get threat() { return 1 + Math.floor(this.minutes) + this.hordes * 2; }
   get hpMul() { return this.on ? 1 + 0.1 * Math.max(0, this.minutes - 3) + 0.15 * this.hordes : 1; }
-  get dmgMul() { return this.on ? 1 + 0.06 * Math.max(0, this.minutes - 3) + 0.08 * this.hordes : 1; }
+  get dmgMul() { if (this.fixedDmg) return this.fixedDmg; return this.on ? 1 + 0.06 * Math.max(0, this.minutes - 3) + 0.08 * this.hordes : 1; }
   get horde() { return this.phase === 'horde'; }
   get gore() { const s = this.g.input && this.g.input.settings; return !s || s.gore !== false; }
 

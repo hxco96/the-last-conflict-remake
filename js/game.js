@@ -255,6 +255,7 @@ export class Game {
       if (d && p) this.pickups.push(this.makePickup(d.name, p.x, p.y - 8, null));
     }
     if (this.isClient) return; // the host owns NPCs and zeds
+    if (this.opts.mode === 'Siege') return; // the siege brings its own survivors (siege.js)
     // Friendly NPCs: "Soilder" markers are soldiers, "Survivor" markers civilians to rescue.
     const placeSome = (list, max, kind) => {
       const pool = [...(list || [])].sort(() => Math.random() - 0.5).slice(0, max);
@@ -268,7 +269,7 @@ export class Game {
     }
     // a few infected already roaming, away from the player
     const zeds = this.groups[0];
-    for (let i = 0; i < Math.round(5 * this.density) && zeds && this.opts.mode !== 'Peaceful'; i++) {
+    for (let i = 0; i < Math.round(5 * this.density) && zeds && this.opts.mode !== 'Peaceful' && this.opts.mode !== 'Siege'; i++) {
       const p = this.spawnPoint();
       if (p) this.spawnMob(this.pickId(zeds.ids), p.x, p.y);
     }
@@ -1275,7 +1276,7 @@ export class Game {
     else if (nxt) {
       tx = nxt[0] * T + 16; ty = nxt[1] * T + 22;
       const dyn = map.dyn[map.idx(nxt[0], nxt[1])];
-      if (dyn && map.blocking(nxt[0], nxt[1]) && Math.hypot(tx - m.x, ty - 6 - m.y) < 30) bash = dyn;
+      if (dyn && map.blocking(nxt[0], nxt[1], false, true) && Math.hypot(tx - m.x, ty - 6 - m.y) < 30) bash = dyn;
     } else {
       // no route: idle shamble
       m.wander = (m.wander || 0) - dt;
@@ -1583,7 +1584,7 @@ export class Game {
     lc.globalCompositeOperation = 'source-over';
     lc.setTransform(1, 0, 0, 1, 0, 0);
     lc.clearRect(0, 0, L.width, L.height);
-    lc.fillStyle = `rgba(4,6,14,${this.opts.lobby ? 0.3 : AMBIENT_DARK})`;
+    lc.fillStyle = `rgba(4,6,14,${this.opts.lobby ? 0.3 : AMBIENT_DARK * (this.ambientScale ?? 1)})`;
     lc.fillRect(0, 0, L.width, L.height);
     lc.globalCompositeOperation = 'destination-out';
     lc.setTransform(zoom, 0, 0, zoom, -camX * zoom, -camY * zoom);
@@ -1687,6 +1688,7 @@ export class Game {
     for (const m of this.mobs) if (m.alive && Math.hypot(m.x - me.x, m.y - me.y) < 520) dot(m.x, m.y, (m.boss ? 2.6 : 1.3) * u, m.elite ? '#ff9a3a' : '#ff3b3b');
     for (const n of [...(this.npcs || []), ...(this.npcMirror || [])]) if (n.alive && !n.dead) dot(n.x, n.y, 1.5 * u, '#9cff9c');
     if (this.ext && this.ext.heli) { const h = this.ext.heli; dot(h.tx ?? h.x, h.ty ?? h.y, 3 * u, '#ffd36b'); }
+    if (this.ext && this.ext.siege && this.ext.siege.ready) { const sg = this.ext.siege; dot(sg.zones.anchor.x, sg.zones.anchor.y, 3 * u, '#ffd36b'); for (const p of sg.piles) dot(p.x, p.y, 1.4 * u, '#c8a45a'); }
     if (this.ext && this.ext.deployDoors) for (const d of this.ext.deployDoors) dot(d.x + 16, d.y + 16, 2 * u, '#7dff8a');
     // teammates: big blue dots with their initial, red when down
     if (this.avatars) {
