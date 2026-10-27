@@ -77,6 +77,12 @@ export function group(re) {
   return groupCache.get(key);
 }
 
+// Ambient voices (zed moans) yield to the siren and radio: a duck level during warn/horde phases and
+// a cap on how many play at once, so 200 zeds don't turn into noise that hides the warnings.
+let ambDuck = 0, ambVoices = 0;
+const AMB_MAX = 8;
+export function ambientDuck(v) { ambDuck = v; }
+
 // Play one sample (or a random one from a list). opts: vol, x/y (world position), rate, spread, gap.
 export function sample(names, opts = {}) {
   if (sfx.muted || !ensure() || !index) return false;
@@ -93,6 +99,7 @@ export function sample(names, opts = {}) {
     vol *= Math.pow(1 - d / range, 1.6);
     pan = Math.max(-0.8, Math.min(0.8, dx / 320));
   }
+  if (opts.amb) { if (ambVoices >= AMB_MAX) return true; vol *= 1 - ambDuck; }
   if (vol < 0.01) return true;
   const buf = buffers.get(name);
   if (!(buf instanceof AudioBuffer)) { load(name); return false; }
@@ -105,6 +112,7 @@ export function sample(names, opts = {}) {
   let node = src.connect(g);
   if (pan && ac.createStereoPanner) { const p = ac.createStereoPanner(); p.pan.value = pan; node = node.connect(p); }
   node.connect(sfxBus);
+  if (opts.amb) { ambVoices++; src.onended = () => { ambVoices--; }; }
   src.start(now + (opts.delay || 0));
   return true;
 }
@@ -316,7 +324,7 @@ export const play = {
   radio: () => sample(G.radio(), { vol: 0.35 }),
   mob(kind, mobName, x, y) {
     const re = MOB[family(mobName)][kind];
-    sample(group(re), { vol: kind === 'moan' ? 0.45 : 0.6, x, y, gap: kind === 'moan' ? 0.6 : 0.12, range: kind === 'moan' ? 420 : 600 });
+    sample(group(re), { vol: kind === 'moan' ? 0.45 : 0.6, x, y, gap: kind === 'moan' ? 0.6 : 0.12, range: kind === 'moan' ? 420 : 600, amb: kind === 'moan' });
   },
   ui: (kind) => sample(G[kind] ? G[kind]() : [], { vol: 0.4, spread: 0 }),
 };

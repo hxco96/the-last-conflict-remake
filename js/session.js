@@ -13,6 +13,7 @@ import { MODES, THEMES } from './modes.js';
 import { DIFFICULTY, ZOMBIE_COUNT, payout } from './profile.js';
 import { music } from './sfx.js';
 import { CAUSES } from './survival.js';
+import { grantScrap } from './siege.js';
 
 export const FIRST_INTERMISSION = 60;
 export const INTERMISSION = 45;
@@ -115,6 +116,15 @@ export class Session {
     this.force = true; this.joined = true; this.dropAll = true; this.timer = 0;
   }
   setAutoStart(on) { this.autoStart = on; this.force = false; if (on && this.timer <= 0) this.timer = 3; this.broadcastState(); }
+  // The host dropped mid-run and this player took over: next round starts soon on the same map with
+  // the clock, hordes and threat where the old host left them (see startMatch).
+  resume(run) {
+    this.resumeRun = run;
+    this.autoStart = true;
+    const mi = this.assets.mapIndex.findIndex((m) => m.name === run.map);
+    if (mi >= 0) this.next = { ...this.next, map: mi };
+    this.timer = Math.min(this.timer, 15);
+  }
   get anyoneJoined() { return this.autoStart || this.joined || this.joinedPeers.size > 0; }
   // in the lobby with a match running (or about to): you're dropped in without queuing
   get dropIn() { return this.autoStart || this.joined || this.dropAll; }
@@ -216,6 +226,11 @@ export class Session {
     this.profile.stats.kills += m.kills;
     this.profile.stats.best = Math.max(this.profile.stats.best, Math.round(m.aliveTime || 0));
     m.record = this.record(m, result);
+    // a long run outside Siege also stocks your Siege bases with scrap
+    if (m.opts.mode !== 'Siege' && m.opts.mode !== 'Peaceful') {
+      const scrap = Math.floor((m.aliveTime || 0) / 60) * 6 + (m.dir ? m.dir.hordes * 20 : 0);
+      if (scrap > 0 && grantScrap(scrap)) pay.siegeScrap = scrap;
+    }
     this.profile.save();
     m.lastPay = pay;
     return pay;
@@ -258,6 +273,11 @@ export class Session {
     m.onEnd = () => {}; m.onWin = () => {};
     try { await m.start(); } catch (err) { this.starting = false; this.state = 'intermission'; this.timer = INTERMISSION; throw err; }
     m.session = this;
+    if (this.resumeRun && !msg) {
+      const r = this.resumeRun; this.resumeRun = null;
+      m.time = r.tm; m.dir.hordes = r.h; m.dir.nextHorde = Math.max(r.nh, r.tm + 30);
+      this.lobby.msg(`Run resumed at ${Math.floor(r.tm / 60)}:${String(r.tm % 60).padStart(2, '0')} with ${r.h} horde${r.h === 1 ? '' : 's'} survived.`, '#7dff8a');
+    }
     // co-op: everyone starts together at a spot the host picks
     if (this.coop && this.coop.host) { m.teamSpawn = m.pickSpawn(); this.coop.net.broadcast({ t: 'start', round: this.round, next: { ...n }, spawn: m.teamSpawn, all: this.autoStart || this.dropAll }); }
     else if (msg && msg.spawn) { m.teamSpawn = msg.spawn; this.dropAll = !!msg.all; }
@@ -268,6 +288,10 @@ export class Session {
     this.dropAll = false;
     if (drop) this.deploy();
     else this.lobby.msg('Match started without you — walk north into the DEPLOY GATE to join, or spectate from the mission board.', '#7dff8a');
+    if (this.coop && !drop && !this.profile.prefs.tipJoin) {
+      this.profile.prefs.tipJoin = 1; this.profile.save();
+      this.lobby.msg('CO-OP TIP: a round is live. Walk NORTH up the hall into the green DEPLOY GATE to drop in with your team. Go down and a teammate can revive you (hold USE next to them).', '#ffd36b');
+    }
   }
 
   deploy() {

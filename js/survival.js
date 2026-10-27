@@ -8,7 +8,7 @@
 // * Brutal feedback (local only): gibs and blood sprays, kill streaks, a damage-pulse vignette.
 // In co-op the host runs the clock and the elite rolls; clients get the phase through 'dir' messages.
 import { hudScale } from './game.js';
-import { play, sample, music, siren } from './sfx.js';
+import { play, sample, music, siren, ambientDuck } from './sfx.js';
 
 export const HORDE_FIRST = 240, HORDE_EVERY = 300, HORDE_WARN = 12, HORDE_LEN = 75;
 const ELITES = {
@@ -37,6 +37,8 @@ export class Director {
   get threat() { return 1 + Math.floor(this.minutes) + this.hordes * 2; }
   get hpMul() { return this.on ? 1 + 0.1 * Math.max(0, this.minutes - 3) + 0.15 * this.hordes : 1; }
   get dmgMul() { if (this.fixedDmg) return this.fixedDmg; return this.on ? 1 + 0.06 * Math.max(0, this.minutes - 3) + 0.08 * this.hordes : 1; }
+  // Late-game sink: boards hammered up after minute 10 are steel-reinforced (up to x3 HP at minute 30).
+  get steel() { return this.on ? 1 + Math.min(2, Math.max(0, this.minutes - 10) / 10) : 1; }
   get horde() { return this.phase === 'horde'; }
   get gore() { const s = this.g.input && this.g.input.settings; return !s || s.gore !== false; }
 
@@ -47,6 +49,7 @@ export class Director {
     if (this.streakT <= 0) this.streak = 0;
     this.streakShow -= dt;
     this.updateGibs(dt);
+    ambientDuck(this.phase === 'horde' ? 0.45 : this.phase === 'warn' ? 0.7 : 0);
     if (!this.on || this.g.over) return;
     const g = this.g;
     if (g.isClient) { this.phaseT = Math.max(0, this.phaseT - dt); return; }
@@ -71,6 +74,7 @@ export class Director {
 
   // co-op client: host's director state
   applyNet(m) {
+    if (this.g.coop) this.g.coop.lastRun = { tm: m.tm, h: m.h, nh: m.nh, r: m.r, map: this.g.opts.map.name }; // enough to resume the run if the host drops
     if (m.h !== this.hordes || m.p !== this.phase) {
       const was = this.phase;
       this.hordes = m.h; this.phase = m.p;
@@ -101,6 +105,8 @@ export class Director {
     for (let i = 0; i < 3 + this.hordes; i++) { const d = g.data.rollDrop(0); if (d) put(d.name); }
     put('Herb-G', 1); put(Math.random() < 0.5 ? 'Herb-R' : 'Herb-B', 1);
     const w = g.rollLoot(2, true); if (w) put(w.name, null, true);
+    if (this.hordes >= 2) put('Boards', 3 + this.hordes); // keep the walls up as the waves grow
+    if (this.hordes >= 3) { const w2 = g.rollLoot(3, true); if (w2) put(w2.name, null, true); } // deep runs: a second prize
     g.fx.spawn('dust', pl.x, pl.y - 6, { scale: 2 });
     play.radio();
   }

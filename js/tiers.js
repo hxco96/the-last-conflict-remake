@@ -45,7 +45,8 @@ export const TIER_COLORS = ['#888', '#aaa', '#7dff8a', '#6bb8ff', '#c47bff', '#f
 // Loot found on a map when a match starts is limited to low tiers; the ceiling rises as the
 // match goes on and bosses drop one tier higher.
 export function lootCap(timeSec, boss = false) {
-  return Math.min(4, 2 + Math.floor(timeSec / 360)) + (boss ? 1 : 0);
+  // T4 at 18 min; past 30 min even the common floor loot can roll Legendary so deep runs keep a prize to chase
+  return Math.min(timeSec >= 1800 ? 5 : 4, 2 + Math.floor(timeSec / 360)) + (boss ? 1 : 0);
 }
 
 export function statLine(it, stat) {

@@ -12,6 +12,7 @@ import { LobbyExt } from './lobby.js';
 import { spawnNPC, updateNPC, hurtNPC, reviveNPC, rescueSurvivor } from './npc.js';
 import { Director } from './survival.js';
 import { ZOMBIE_COUNT } from './profile.js';
+import { perf } from './perf.js';
 
 // Group unlock delays from spawn_levels_*.rktd are in seconds; scaled so a solo run sees them sooner.
 const TIME_SCALE = 1 / 3;
@@ -499,7 +500,7 @@ export class Game {
     // bigger hordes for bigger squads (Left 4 Dead style: +60% per extra survivor)
     const squad = 1 + (this.coop ? this.coop.targets(this).length : 0);
     let [cap, interval] = this.dir.spawnTuning(Math.min(8 + this.time / 8, 50) * (this.diff ? this.diff.spawn : 1), Math.max(0.5, 2.2 - this.time / 200));
-    cap *= (1 + 0.6 * (squad - 1)) * this.density;
+    cap *= (1 + 0.6 * (squad - 1)) * this.density * perf.scale; // perf.scale shrinks the horde when this device can't keep up
     this.spawnT = this.density > 1 ? interval / Math.sqrt(this.density) : interval;
     if (alive >= cap) return;
     const open = this.groups.filter((g) => this.time >= g.unlock);
@@ -871,10 +872,12 @@ export class Game {
       const n = this.items.get('Boards') || 0;
       if (!n) { this.msg('You need boards to barricade this window'); return; }
       this.items.set('Boards', n - 1);
+      c.baseMax = c.baseMax || c.maxHp;
+      c.maxHp = Math.round(c.baseMax * this.dir.steel);
       c.hp = c.maxHp;
       this.flowT = 0;
       play.hammer();
-      this.msg('Window boarded up', '#d7b98a');
+      this.msg(this.dir.steel > 1.25 ? `Window boarded up — steel boards x${this.dir.steel.toFixed(1)}` : 'Window boarded up', '#d7b98a');
     }
   }
 
@@ -1822,7 +1825,8 @@ export class Game {
       else {
         text(clock, M + 8, M + 22 * u, 22 * u, '#fff');
         text(`KILLS ${this.kills}`, M + 8 + 70 * u, M + 22 * u, 15 * u, '#ff9b6b');
-        text(`ZEDS NEAR ${alive}${this.floorCount > 1 ? `  ·  FLOOR ${this.z + 1}/${this.floorCount}` : ''}`, M + 8 + 96 * u, M + 42 * u, 12 * u, '#aaa');
+        text(`ZEDS NEAR ${alive}${this.floorCount > 1 ? `  ·  FLOOR ${this.z + 1}/${this.floorCount}` : ''}`, M + 8 + 96 * u, M + 42 * u, 12 * u, '#aaa');        const chip = [perf.dropped ? `PERF MODE ${Math.round(perf.scale * 100)}%` : '', this.coop && this.coop.client && this.coop.pingMs != null ? `PING ${this.coop.pingMs} ms` : ''].filter(Boolean).join('  ·  ');
+        if (chip) text(chip, M + 8, M + 62 * u, 11 * u, perf.dropped || this.coop.pingMs > 200 ? '#ffb347' : '#8fd18f');
       }
       msgY = M + 92 * u;
     }
