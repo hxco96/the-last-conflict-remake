@@ -9,10 +9,10 @@ import { MODES, THEMES } from './modes.js';
 import { campaignLine } from './siege.js';
 import { LOOKS } from './actors.js';
 import { unlockAudio, sfx, initAudio, music, setMuted, applyVolumes, play, suspendAudio } from './sfx.js';
-import { Net } from './net.js';
+import { Net, listRooms, hasRegistry } from './net.js';
 import { perfTick, perfReset } from './perf.js';
 import { Coop } from './coop.js';
-import { Input, ACTIONS, TOUCH_LABELS, DEFAULT_PAD, DEFAULT_PAD_HOLD, loadSettings, saveSettings, resetSettings, keyLabel } from './input.js';
+import { Input, ACTIONS, TOUCH_LABELS, DEFAULT_PAD, DEFAULT_PAD_HOLD, loadSettings, saveSettings, resetSettings, keyLabel, TOUCHPAD } from './input.js';
 
 const canvas = document.getElementById('game');
 const overlay = document.getElementById('overlay');
@@ -29,6 +29,7 @@ sfx.musicVol = settings.volMusic ?? 0.45;
 const input = new Input(canvas, settings);
 let screen = null;      // { name, back } for the open overlay screen
 let settingsTab = 'gameplay';
+let padAdvanced = false;
 
 // Backing size = the canvas's on-screen size, so drawing and touch coordinates stay 1:1
 function resize() {
@@ -198,8 +199,8 @@ function controlsHelp() {
   }
   if (input.lastDevice === 'pad') {
     const h = (a) => input.hint(a);
-    const b = (id) => input.padButtonLabel((settings.pad[id] || [])[0]), hd = (id) => input.padButtonLabel(((settings.padHold || {})[id] || [])[0]);
-    return `${input.padName || 'Controller'}: L-stick move (${b('run')} run) · R-stick aim · ${b('fire')} ${settings.legacy ? 'auto-fire' : 'fire'} · ${b('context')} use/jump · ${b('jump')} jump · ${b('reload')} reload (hold: mine) · ${b('toggleThrowable')} next throwable (hold: heal) · ${b('grenade')} throw · ${b('nextWeapon')} next weapon · ${b('lastWeapon')} last weapon · D-pad weapon slots · ${b('frenzy')} frenzy · ${b('pause')} pause (hold ${hd('inventory')}: bag) · in menus ${input.padButtonLabel(0)} select / ${input.padButtonLabel(1)} back`;
+    const b = (id) => input.padButtonLabel((settings.pad[id] || [])[0]);
+    return `${input.padName || 'Controller'}: L-stick move (${b('run')} run) · R-stick aim · ${b('fire')} ${settings.legacy ? 'auto-fire' : 'fire'} · ${b('context')} use/jump · ${b('jump')} jump · ${b('reload')} reload (hold: mine) · ${b('toggleThrowable')} next throwable (hold: heal) · ${b('grenade')} throw · ${b('nextWeapon')} next weapon · ${b('lastWeapon')} last weapon · D-pad weapon slots · ${b('frenzy')} frenzy · ${b('pause')} pause · ${b('inventory')} bag · in menus ${input.padButtonLabel(0)} select / ${input.padButtonLabel(1)} back`;
   }
   const h = (a) => input.hint(a);
   return `${['up', 'left', 'down', 'right'].map(h).join('')} move · ${h('run')} run · mouse aim · ${h('fire')} attack · ${settings.legacy ? h('autofire') + ' legacy auto-fire · ' : ''}${h('grenade')} grenade · ${h('reload')} reload · ${h('interact')} use · ${h('heal')} heal · ${h('inventory')} inventory · ${h('shop')} upgrades · ${h('frenzy')} frenzy · ${h('pause')} pause — all rebindable in Settings`;
@@ -310,40 +311,102 @@ const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(r,
 // ---------- online co-op ----------
 let coopBusy = false;
 function showCoop(status = '') {
+  if (typeof status !== 'string') status = ''; // used directly as an onclick handler
   const name = el('input', { type: 'text', maxlength: 14, value: profile.prefs.name || LOOKS[choice.look].name, placeholder: 'Your name' });
   const code = el('input', { type: 'text', maxlength: 5, placeholder: 'CODE', class: 'code', autocapitalize: 'characters', autocomplete: 'off', spellcheck: 'false' });
-  const remember = () => { profile.prefs = { ...profile.prefs, cls: choice.cls, look: choice.look, name: name.value.trim().slice(0, 14) || LOOKS[choice.look].name }; profile.save(); };
-  const go = async (role) => {
-    if (coopBusy) return;
-    if (role === 'join' && !/^[A-Za-z]{5}$/.test(code.value.trim())) { showCoop('Type the 5-letter room code your friend sees.'); return; }
-    remember();
-    goFullscreen(); // still inside the click
-    coopBusy = true;
-    showCoop(role === 'host' ? 'Opening a room…' : 'Connecting…');
-    const net = new Net();
-    try {
-      if (role === 'host') await net.host(); else await net.join(code.value);
-      coopBusy = false;
-      const coop = new Coop(net, { name: profile.prefs.name, look: choice.look, cls: choice.cls });
-      await enterLobby(coop);
-    } catch (err) {
-      coopBusy = false;
-      net.close();
-      showCoop('Could not connect: ' + (err && err.message || err));
-    }
-  };
+  const online = hasRegistry();
+  // role 'host' (pub: listed in Browse games) or 'join' (a typed code)
+  const go = (role, pub = false) => connectCoop(role, { name, pub, code: code.value }, (m) => showCoop(m));
   open('coop', showMenu, el('div', { class: 'panel' },
     el('h2', {}, 'CO-OP ONLINE'),
     el('p', { class: 'sub' }, 'Up to 4 survivors. The host runs the zeds and the rounds; everyone keeps their own coins, weapons and loot. Fall in a fight and you go DOWN — a teammate can pick you up.'),
     el('div', { class: 'row' }, el('label', { class: 'sub' }, 'Name '), name),
+    online ? el('div', { class: 'row' },
+      el('button', { class: 'go', 'data-focus': true, onclick: () => { remember(name); showBrowse(); } }, 'BROWSE GAMES'),
+      el('button', { class: 'pick small', onclick: () => quickPlay(name, (m) => showCoop(m)) }, el('b', {}, 'QUICK PLAY'))) : null,
     el('div', { class: 'row' },
-      el('button', { class: 'go', 'data-focus': true, onclick: () => go('host') }, 'HOST A GAME')),
-    el('h3', {}, 'Join a friend'),
+      el('button', online ? { class: 'pick small', onclick: () => go('host', true) } : { class: 'go', 'data-focus': true, onclick: () => go('host') }, online ? el('b', {}, 'HOST PUBLIC') : 'HOST A GAME'),
+      online ? el('button', { class: 'pick small', onclick: () => go('host', false) }, el('b', {}, 'HOST PRIVATE')) : null),
+    online ? el('p', { class: 'help' }, 'Public games appear in Browse games for anyone to join. Private games are code-only.') : null,
+    el('h3', {}, 'Join with a code'),
     el('div', { class: 'row' }, code, el('button', { class: 'pick small', onclick: () => go('join') }, el('b', {}, 'JOIN'))),
     status ? el('p', { class: 'sub status' }, status) : null,
     el('p', { class: 'help' }, 'Peer-to-peer over the internet (WebRTC) — no account needed. Some strict school or work networks block it.'),
     el('button', { class: 'pick small', onclick: showMenu }, el('b', {}, 'Back'))));
   code.addEventListener('keydown', (e) => { if (e.key === 'Enter') go('join'); });
+}
+
+function remember(nameEl) {
+  profile.prefs = { ...profile.prefs, cls: choice.cls, look: choice.look, name: nameEl.value.trim().slice(0, 14) || LOOKS[choice.look].name };
+  profile.save();
+}
+
+async function connectCoop(role, { name, pub = false, code = '' }, back) {
+  if (coopBusy) return;
+  if (role === 'join' && !/^[A-Za-z]{5}$/.test(code.trim())) { back('Type the 5-letter room code your friend sees.'); return; }
+  remember(name);
+  goFullscreen(); // still inside the click
+  coopBusy = true;
+  back(role === 'host' ? 'Opening a room… (the first connection can take up to a minute while the free server wakes up)' : 'Connecting…');
+  const net = new Net();
+  try {
+    if (role === 'host') await net.host(); else await net.join(code);
+    coopBusy = false;
+    await enterLobby(new Coop(net, { name: profile.prefs.name, look: choice.look, cls: choice.cls }));
+    if (role === 'host' && pub && session && session.coop && session.coop.net === net) net.publish(() => {
+      const S = session; if (!S) return null;
+      return { name: profile.prefs.name, players: net.count, max: 4, mode: S.next.mode, map: S.assets.mapIndex[S.next.map].name, state: S.state === 'running' ? 'running' : 'lobby' };
+    });
+  } catch (err) {
+    coopBusy = false;
+    net.close();
+    back('Could not connect: ' + (err && err.message || err));
+  }
+}
+
+// Join the fullest open public game; if there is none, open one so others can drop in.
+async function quickPlay(name, back) {
+  if (coopBusy) return;
+  back('Looking for a game…');
+  let rooms = [];
+  try { rooms = await listRooms(); } catch (e) { back(e.message); return; }
+  const target = rooms.find((r) => r.players < r.max);
+  if (target) connectCoop('join', { name, code: target.code }, back);
+  else connectCoop('host', { name, pub: true }, back);
+}
+
+let browseTimer = null;
+function showBrowse(status = '') {
+  clearInterval(browseTimer);
+  const name = el('input', { type: 'text', maxlength: 14, value: profile.prefs.name || LOOKS[choice.look].name, placeholder: 'Your name' });
+  const list = el('div', { class: 'servers' }, el('p', { class: 'sub' }, 'Looking for games…'));
+  const note = el('p', { class: 'sub status' }, status);
+  let live = true;
+  const stop = () => { live = false; clearInterval(browseTimer); };
+  const refresh = async () => {
+    try {
+      const rooms = await listRooms();
+      if (!live) return;
+      note.textContent = '';
+      list.replaceChildren(...(rooms.length ? rooms.map((r) => {
+        const full = r.players >= r.max;
+        return el('button', { class: 'pick server', disabled: full || null, onclick: () => { stop(); connectCoop('join', { name, code: r.code }, (m) => showBrowse(m)); } },
+          el('b', {}, r.name + "'s game"),
+          el('span', {}, (r.mode || 'Survival') + ' · ' + (r.map || '')),
+          el('span', {}, r.players + '/' + r.max + (full ? ' FULL' : r.state === 'running' ? ' · in round' : '')));
+      }) : [el('p', { class: 'sub' }, 'No public games right now. Host one and others can join you, or use Quick Play.')]));
+    } catch (e) { if (live) note.textContent = e.message; }
+  };
+  open('browse', () => { stop(); showCoop(); }, el('div', { class: 'panel' },
+    el('h2', {}, 'GAMES'),
+    el('div', { class: 'row' }, el('label', { class: 'sub' }, 'Name '), name),
+    list, note,
+    el('div', { class: 'row' },
+      el('button', { class: 'pick small', 'data-focus': true, onclick: refresh }, el('b', {}, 'Refresh')),
+      el('button', { class: 'pick small', onclick: () => { stop(); connectCoop('host', { name, pub: true }, (m) => showBrowse(m)); } }, el('b', {}, 'Host public')),
+      el('button', { class: 'pick small', onclick: () => { stop(); showCoop(); } }, el('b', {}, 'Back')))));
+  refresh();
+  browseTimer = setInterval(refresh, 5000);
 }
 
 // The host's connection dropped mid-run: offer to carry the run on from here under a new room code.
@@ -707,68 +770,72 @@ function volume(label, key, field, def) {
     }, onchange: () => play.ui('menuClick') }));
 }
 
+function section(title, ...kids) { return el('div', { class: 'sect' }, el('h3', {}, title), ...kids); }
+
 function showSettings(back) {
-  const tabs = el('div', { class: 'tabs' }, ...[['gameplay', 'Gameplay'], ['kbm', 'Keyboard & Mouse'], ['pad', 'Controller'], ['touch', 'Touch']]
-    .map(([id, name]) => el('button', { class: 'tab' + (settingsTab === id ? ' on' : ''), onclick: () => { settingsTab = id; showSettings(back); } }, name)));
+  const tabList = [['gameplay', 'Game'], ['audio', 'Audio'], ['kbm', 'Keyboard'], ['pad', 'Controller'], ['touch', 'Touch']];
+  if (!tabList.some(([id]) => id === settingsTab)) settingsTab = 'gameplay';
+  const tabs = el('div', { class: 'tabs' }, ...tabList.map(([id, name]) => el('button', { class: 'tab' + (settingsTab === id ? ' on' : ''), onclick: () => { settingsTab = id; showSettings(back); } }, name)));
+  const mode = (legacy, title, desc) => el('button', { class: 'pick' + (!!settings.legacy === legacy ? ' on' : ''), onclick: () => { settings.legacy = legacy; saveSettings(settings); showSettings(back); } }, el('b', {}, title), el('small', {}, desc));
   let body;
   if (settingsTab === 'gameplay') {
     body = el('div', { class: 'opts' },
-      el('h3', {}, 'Shooting mode'),
-      el('div', { class: 'choices mode' },
-        el('button', { class: 'pick' + (!settings.legacy ? ' on' : ''), onclick: () => { settings.legacy = false; saveSettings(settings); showSettings(back); } }, el('b', {}, 'Modern aim'), el('small', {}, 'mouse / right stick / aim thumb')),
-        el('button', { class: 'pick' + (settings.legacy ? ' on' : ''), onclick: () => { settings.legacy = true; saveSettings(settings); showSettings(back); } }, el('b', {}, 'Legacy auto-aim'), el('small', {}, `PC: hold ${keyLabel(settings.keys.autofire[0])} · pad: ${input.padButtonLabel(settings.pad.fire[0])} · touch: FIRE`))),
-      el('p', { class: 'sub left' }, 'Legacy mode locks onto the closest visible zed in your weapon\'s range and keeps firing while the button is held. Each shot rolls a weighted hit chance: weapon class accuracy, distance versus weapon range, whether you are standing / walking / running, target size and whether it is rushing, a Frenzy bonus, and a pity bonus that grows after every miss. Misses fly just past the target.'),
-      toggle('Show hit chance on the lock-on reticle', 'showHitChance'),
-      toggle('Weather effects', 'weather', 'rain with thunder and snow (applies next game)'),
-      toggle('Gore', 'gore', 'limbs come off, gibs and blood sprays'),
-      el('h3', {}, 'Screen & device'),
-      toggle('Auto fullscreen', 'autoFullscreen', 'go fullscreen when you enter the base (iPhone: use Add to Home Screen instead)'),
-      toggle('Minimap', 'minimap', 'small map with you, teammates, zeds and the way out'),
-      toggle('Pause when the game loses focus', 'pauseOnHide', 'switching apps or tabs pauses solo games (co-op keeps running)'),
-      el('h3', {}, 'Offline'),
-      el('p', { class: 'sub left' }, 'The game core works offline once loaded. Maps and music are saved as you play them — or grab everything now (~30 MB).'),
-      el('button', { class: 'pick small', onclick: cacheEverything }, el('b', {}, '⬇ Download everything for offline')),
-      el('h3', {}, 'Audio'),
-      el('div', { class: 'opts' },
-        volume('Master volume', 'volMaster', 'master', 0.9),
-        volume('Sound effects', 'volSfx', 'sfxVol', 0.9),
-        volume('Music', 'volMusic', 'musicVol', 0.45)),
-      el('div', { class: 'choices mode' }, ...[['tethered', 'Sake — Tethered mix', 'slowed, dark strings and a creeping pulse'], ['original', 'Sake — original', 'the track as it was']].map(([id, name, desc]) =>
-        el('button', { class: 'pick' + ((settings.lobbyMusic || 'tethered') === id ? ' on' : ''), onclick: () => { settings.lobbyMusic = id; saveSettings(settings); if (session && session.view === 'lobby') music(session.lobbyTrack(), true); showSettings(back); } }, el('b', {}, name), el('small', {}, 'Base music: ' + desc)))),
-      el('button', { class: 'pick small danger', onclick: () => { if (confirm('Reset all controls and settings to defaults?')) { resetSettings(settings); showSettings(back); } } }, el('b', {}, 'Reset everything to defaults')));
+      section('Shooting',
+        el('div', { class: 'choices mode' },
+          mode(false, 'Modern aim', 'mouse / right stick / aim thumb'),
+          mode(true, 'Legacy auto-aim', 'hold ' + keyLabel(settings.keys.autofire[0]) + ' / ' + input.padButtonLabel(settings.pad.fire[0]) + ' / FIRE to auto-shoot the closest zed')),
+        toggle('Show hit chance on the lock-on reticle', 'showHitChance')),
+      section('Display',
+        toggle('Minimap', 'minimap'),
+        toggle('Weather effects', 'weather', 'applies next game'),
+        toggle('Gore', 'gore'),
+        toggle('Auto fullscreen', 'autoFullscreen', 'iPhone: use Add to Home Screen instead'),
+        toggle('Pause when the game loses focus', 'pauseOnHide', 'solo games only; co-op keeps running')),
+      section('Data',
+        el('div', { class: 'row' },
+          el('button', { class: 'pick small', onclick: cacheEverything }, el('b', {}, '⬇ Save for offline (~30 MB)')),
+          el('button', { class: 'pick small danger', onclick: () => { if (confirm('Reset all controls and settings to defaults?')) { resetSettings(settings); showSettings(back); } } }, el('b', {}, 'Reset settings')))));
+  } else if (settingsTab === 'audio') {
+    body = el('div', { class: 'opts' },
+      section('Volume', volume('Master', 'volMaster', 'master', 0.9), volume('Sound effects', 'volSfx', 'sfxVol', 0.9), volume('Music', 'volMusic', 'musicVol', 0.45)),
+      section('Base music', el('div', { class: 'choices mode' }, ...[['tethered', 'Sake — Tethered mix', 'slowed, dark strings'], ['original', 'Sake — original', 'the track as it was']].map(([id, name, desc]) =>
+        el('button', { class: 'pick' + ((settings.lobbyMusic || 'tethered') === id ? ' on' : ''), onclick: () => { settings.lobbyMusic = id; saveSettings(settings); if (session && session.view === 'lobby') music(session.lobbyTrack(), true); showSettings(back); } }, el('b', {}, name), el('small', {}, desc))))));
   } else if (settingsTab === 'kbm') {
-    body = el('table', { class: 'binds' }, el('tr', {}, el('th', {}, 'Action'), el('th', {}, 'Primary'), el('th', {}, 'Secondary')),
-      ...ACTIONS.map((a) => el('tr', {}, el('td', {}, a.label), el('td', {}, bindButton('key', a.id, 0)), el('td', {}, bindButton('key', a.id, 1)))));
-    body = el('div', {}, el('p', { class: 'sub left' }, 'Click a binding, then press a key, mouse button or scroll the wheel. Red bindings are shared with another action. Mouse always aims.'), body);
+    body = el('div', {}, el('p', { class: 'sub left' }, 'Click a binding, then press a key or mouse button. Red = shared with another action. Mouse always aims.'),
+      el('table', { class: 'binds' }, el('tr', {}, el('th', {}, 'Action'), el('th', {}, 'Primary'), el('th', {}, 'Secondary')),
+        ...ACTIONS.map((a) => el('tr', {}, el('td', {}, a.label), el('td', {}, bindButton('key', a.id, 0)), el('td', {}, bindButton('key', a.id, 1))))));
   } else if (settingsTab === 'pad') {
-    const status = input.pad ? `${input.padName || 'Controller'} connected${input.pad.mapping === 'remapped' ? ' (layout translated for this browser)' : ''} — ${input.pad.id.slice(0, 48)}` : 'No controller detected — connect a PS5 DualSense, PS4 DualShock 4 or Xbox controller (USB or Bluetooth) and press any button.';
+    const status = input.pad ? (input.padName || 'Controller') + ' connected' : 'No controller detected — connect a PS5, PS4 or Xbox controller and press any button.';
     const style = (id, label) => el('button', { class: 'pick small' + ((settings.padStyle || 'auto') === id ? ' on' : ''), onclick: () => { settings.padStyle = id; saveSettings(settings); input.padName = ''; showSettings(back); } }, el('b', {}, label));
+    const fixed = el('tr', {}, el('td', {}, 'Inventory'), el('td', { colspan: 2 }, el('span', { class: 'fixed' }, input.padButtonLabel(TOUCHPAD) + ' — fixed')));
+    const holds = Object.entries(settings.padHold || {}).map(([a, b]) => (ACTIONS.find((x) => x.id === a) || { label: a }).label + ' = ' + b.map((i) => input.padButtonLabel(i)).join('/')).join(' · ');
     body = el('div', {},
-      el('p', { class: 'sub left' }, status),
-      el('p', { class: 'sub left padtest' }, 'Button test: press any button…'),
-      el('div', { class: 'row' }, el('button', { class: 'pick small', onclick: showPadCheck }, el('b', {}, 'Controller check')), settings.padMissing && settings.padMissing.length ? el('small', {}, 'Last check missed: ' + settings.padMissing.join(', ')) : null),
-      el('div', { class: 'row' }, el('small', {}, 'Button names: '), style('auto', 'Auto'), style('ps', 'PlayStation'), style('xbox', 'Xbox')),
-      el('p', { class: 'sub left' }, 'Left stick moves, right stick aims (sticks are fixed). In legacy mode the fire button auto-targets the closest zed. In menus: D-pad / left stick to move, ✕ / A to select, ○ / B to go back.'),
-      el('p', { class: 'sub left' }, 'Tablets & phones: the default layout never needs Create/Share, the PS / Xbox button or the touchpad — browsers like Amazon Silk use those for their own menus. Tap Options / Menu to pause, hold it for your bag. If ○ / B makes the browser go back, the game catches it and opens the pause menu instead.'),
-      el('div', { class: 'opts' },
-        slider('Stick deadzone', 'deadzone', 0.05, 0.45, 0.01, (v) => Math.round(v * 100) + '%'),
-        toggle('Vibration', 'vibration', 'DualSense / DualShock / Xbox rumble on shots, hits and explosions; phone buzz on hits (Android)'),
-        toggle('Run at full stick tilt', 'stickRun')),
-      el('p', { class: 'sub left' }, `Hold bindings (press ~0.4 s): ${Object.entries(settings.padHold || {}).map(([a, b]) => `${(ACTIONS.find((x) => x.id === a) || { label: a }).label} = hold ${b.map((i) => input.padButtonLabel(i)).join('/')}`).join(' · ')}`),
-      el('button', { class: 'pick small', onclick: () => { settings.pad = JSON.parse(JSON.stringify(DEFAULT_PAD)); settings.padHold = JSON.parse(JSON.stringify(DEFAULT_PAD_HOLD)); saveSettings(settings); showToast('Controller buttons reset'); showSettings(back); } }, el('b', {}, 'Reset controller buttons')),
-      el('table', { class: 'binds' }, el('tr', {}, el('th', {}, 'Action'), el('th', {}, 'Button'), el('th', {}, 'Alternate')),
-        ...ACTIONS.filter((a) => !['up', 'down', 'left', 'right'].includes(a.id)).map((a) => el('tr', {}, el('td', {}, a.label), el('td', {}, bindButton('pad', a.id, 0)), el('td', {}, bindButton('pad', a.id, 1))))));
+      el('p', { class: 'sub left padtest' }, status),
+      section('Controller',
+        el('div', { class: 'opts' },
+          slider('Stick deadzone', 'deadzone', 0.05, 0.45, 0.01, (v) => Math.round(v * 100) + '%'),
+          toggle('Vibration', 'vibration'),
+          toggle('Run at full stick tilt', 'stickRun')),
+        el('div', { class: 'row' }, el('small', {}, 'Button names: '), style('auto', 'Auto'), style('ps', 'PlayStation'), style('xbox', 'Xbox'))),
+      section('Fixed buttons',
+        el('p', { class: 'sub left' }, 'Inventory is always the PS4 / PS5 touchpad click. Options pauses, sticks move and aim, D-pad picks weapons.')),
+      el('div', { class: 'row' },
+        el('button', { class: 'pick small', onclick: () => { padAdvanced = !padAdvanced; showSettings(back); } }, el('b', {}, padAdvanced ? '▾ Hide button mapping' : '▸ Customize buttons')),
+        el('button', { class: 'pick small', onclick: showPadCheck }, el('b', {}, 'Controller check'))),
+      padAdvanced ? el('div', {},
+        el('p', { class: 'sub left' }, 'Hold ~0.4 s: ' + holds),
+        el('table', { class: 'binds' }, el('tr', {}, el('th', {}, 'Action'), el('th', {}, 'Button'), el('th', {}, 'Alternate')),
+          ...ACTIONS.filter((a) => !['up', 'down', 'left', 'right'].includes(a.id)).map((a) => a.id === 'inventory' ? fixed : el('tr', {}, el('td', {}, a.label), el('td', {}, bindButton('pad', a.id, 0)), el('td', {}, bindButton('pad', a.id, 1))))),
+        el('button', { class: 'pick small', onclick: () => { settings.pad = JSON.parse(JSON.stringify(DEFAULT_PAD)); settings.padHold = JSON.parse(JSON.stringify(DEFAULT_PAD_HOLD)); saveSettings(settings); showToast('Controller buttons reset'); showSettings(back); } }, el('b', {}, 'Reset buttons'))) : null);
   } else {
-    const choices = Object.keys(TOUCH_LABELS);
-    const actionName = (id) => (ACTIONS.find((a) => a.id === id) || { label: id }).label;
     body = el('div', {},
-      el('p', { class: 'sub left' }, 'Left thumb is a floating move stick, the right thumb a floating aim stick that fires when pushed past halfway. In legacy mode the aim stick becomes a big FIRE button that auto-targets.'),
-      el('div', { class: 'opts' },
-        slider('Control size', 'touchScale', 0.7, 1.5, 0.05, (v) => Math.round(v * 100) + '%'),
-        slider('Control opacity', 'touchOpacity', 0.2, 1, 0.05, (v) => Math.round(v * 100) + '%'),
-        toggle('Left-handed layout', 'leftHanded', 'mirror sticks and buttons'),
-        toggle('Run at full stick tilt', 'stickRun')),
-      el('p', { class: 'sub left' }, 'The layout is context-aware: USE appears next to something you can use, RELOAD when your mag is not full, HEAL when you are hurt and carry healing; hold NADE to switch throwables; ≡ opens pause, bag, next throwable, mine and flashlight.'));
+      section('Layout',
+        el('div', { class: 'opts' },
+          slider('Control size', 'touchScale', 0.7, 1.5, 0.05, (v) => Math.round(v * 100) + '%'),
+          slider('Control opacity', 'touchOpacity', 0.2, 1, 0.05, (v) => Math.round(v * 100) + '%'),
+          toggle('Left-handed layout', 'leftHanded', 'mirror sticks and buttons'),
+          toggle('Run at full stick tilt', 'stickRun'))),
+      el('p', { class: 'sub left' }, 'Left thumb moves, right thumb aims and fires (legacy mode: a big FIRE button). USE, RELOAD and HEAL show up when they apply; hold NADE to switch throwables; ≡ has pause, bag, mine and flashlight.'));
   }
   open('settings', back, el('div', { class: 'panel wide' }, el('h2', {}, 'Settings'), tabs, body,
     el('button', { class: 'go', 'data-focus': true, onclick: () => { input.capture = null; back(); } }, 'Back')));
@@ -825,7 +892,7 @@ function menuNav(dt) {
 // Browsers like Amazon Silk swallow some buttons (Create, PS, touchpad, sometimes ○ as Back). This walks
 // through every button the default layout uses, so the player sees at once which ones never arrive.
 const CHECK_BTNS = [[0, 'select / use'], [1, 'back / jump'], [2, 'reload'], [3, 'throwable / heal'], [4, 'throw'], [5, 'next weapon'], [6, 'last weapon'], [7, 'fire'],
-  [9, 'pause'], [11, 'frenzy'], [12, 'D-pad up'], [13, 'D-pad down'], [14, 'D-pad left'], [15, 'D-pad right']];
+  [9, 'pause'], [11, 'frenzy'], [17, 'inventory (touchpad)'], [12, 'D-pad up'], [13, 'D-pad down'], [14, 'D-pad left'], [15, 'D-pad right']];
 function showPadCheck() {
   const seen = new Set();
   const list = el('div', { class: 'padchk' });

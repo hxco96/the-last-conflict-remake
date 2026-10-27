@@ -24,17 +24,18 @@ export const DEFAULT_KEYS = {
 // D-pad = weapon slots, shoulders = throw / swap. Standard mapping indices.
 // Defaults only use the 16 core buttons: Create/Share (8), PS/Guide (16) and the touchpad (17)
 // open system or browser menus on tablets (Fire OS Silk, Android), so nothing needs them.
-export const PAD_VERSION = 3;
+export const PAD_VERSION = 4;
+export const TOUCHPAD = 17; // PS4 / PS5 touchpad click: the inventory button, fixed (not rebindable)
 export const DEFAULT_PAD = {
   up: [], down: [], left: [], right: [],
   run: [10], fire: [7], autofire: [], grenade: [4],
   context: [0], jump: [1], interact: [], mine: [], reload: [2], heal: [], frenzy: [11],
   slot1: [12], slot2: [15], slot3: [13], slot4: [14], slot5: [], toggleThrowable: [3],
   nextWeapon: [5], prevWeapon: [], lastWeapon: [6],
-  flashlight: [], inventory: [], shop: [], pause: [9], mute: [],
+  flashlight: [], inventory: [TOUCHPAD], shop: [], pause: [9], mute: [],
 };
 // Hold a button ~0.4 s for these (tap keeps the button's normal action).
-export const DEFAULT_PAD_HOLD = { heal: [3], mine: [2], inventory: [9] };
+export const DEFAULT_PAD_HOLD = { heal: [3], mine: [2] };
 
 const PS_NAMES = ['✕ Cross', '○ Circle', '□ Square', '△ Triangle', 'L1', 'R1', 'L2', 'R2', 'Create', 'Options', 'L3', 'R3',
   'D-pad ↑', 'D-pad ↓', 'D-pad ←', 'D-pad →', 'PS', 'Touchpad'];
@@ -109,11 +110,21 @@ export function loadSettings() {
   s.pad = saved.padVersion === PAD_VERSION ? { ...clone(DEFAULT_PAD), ...(saved.pad || {}) } : clone(DEFAULT_PAD);
   s.padHold = saved.padVersion === PAD_VERSION && saved.padHold ? saved.padHold : clone(DEFAULT_PAD_HOLD);
   s.padVersion = PAD_VERSION;
+  lockPad(s);
   if (!s.touchButtons.includes('jump')) s.touchButtons = [...s.touchButtons.slice(0, 5), 'jump'];
   return s;
 }
 
+// The inventory is always the touchpad, and nothing else may use that button.
+export function lockPad(s) {
+  for (const k of Object.keys(s.pad)) s.pad[k] = k === 'inventory' ? [TOUCHPAD] : (s.pad[k] || []).filter((i) => i !== TOUCHPAD);
+  s.pad.inventory = [TOUCHPAD];
+  if (s.padHold) { delete s.padHold.inventory; for (const k of Object.keys(s.padHold)) s.padHold[k] = s.padHold[k].filter((i) => i !== TOUCHPAD); }
+  return s;
+}
+
 export function saveSettings(s) {
+  lockPad(s);
   try { localStorage.setItem(STORE, JSON.stringify(s)); } catch { /* storage unavailable */ }
 }
 

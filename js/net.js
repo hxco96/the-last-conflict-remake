@@ -31,6 +31,21 @@ function brokers() {
   list.push(null);
   return list;
 }
+// Public room list lives on our own matchmaking server (server/index.js). Private rooms never register.
+const registryUrl = () => { const b = brokers()[0]; return b ? `http${b.secure ? 's' : ''}://${b.host}:${b.port}` : null; };
+export const hasRegistry = () => !localMode() && !!registryUrl();
+export async function listRooms(timeout = 20000) {
+  const u = registryUrl();
+  if (!u) throw new Error('no game server configured');
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeout);
+  try {
+    const r = await fetch(u + '/rooms', { signal: ctl.signal, cache: 'no-store' });
+    if (!r.ok) throw new Error('server said ' + r.status);
+    return (await r.json()).rooms || [];
+  } catch (e) { throw new Error(e && e.name === 'AbortError' ? 'the game server is waking up, try again in a moment' : "couldn't reach the game server"); }
+  finally { clearTimeout(t); }
+}
 const localMode = () => /[?&]net=local\b/.test(location.search);
 const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(what + ' timed out')), ms))]);
 
@@ -157,6 +172,20 @@ export class Net {
     return this.code;
   }
 
+  // host: show this room in the public list until close(). getInfo() -> { name, players, max, mode, map, state }
+  publish(getInfo) {
+    const u = this.broker && registryUrl();
+    if (!u || this.role !== 'host') return;
+    this.publicUrl = u;
+    const beat = () => {
+      if (this.closed) return;
+      let info = {}; try { info = getInfo() || {}; } catch { /* not ready */ }
+      fetch(u + '/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...info, code: this.code }), keepalive: true }).catch(() => {});
+    };
+    beat();
+    this.beatTimer = setInterval(beat, 10000);
+  }
+
   async join(code) {
     this.role = 'client';
     this.code = code.trim().toUpperCase();
@@ -198,6 +227,7 @@ export class Net {
 
   close() {
     this.closed = true;
+    if (this.beatTimer) { clearInterval(this.beatTimer); this.beatTimer = null; try { fetch(this.publicUrl + '/rooms/' + this.code, { method: 'DELETE', keepalive: true }).catch(() => {}); } catch { /* offline */ } }
     for (const c of this.conns.values()) { try { c.close(); } catch { /* already closed */ } }
     this.conns.clear();
     try { this.peer && this.peer.destroy(); } catch { /* ignore */ }

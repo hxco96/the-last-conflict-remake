@@ -28,3 +28,7 @@ cd server && npm install && PORT=9100 node index.js
 
 Phones on mobile data need a TURN relay when a direct connection is impossible; `js/config.js` ships the free
 public Open Relay servers for that.
+
+## Public game list
+
+The server also keeps a small in-memory list of open public games (`GET /rooms`; hosts `POST /rooms` every 10 s and `DELETE /rooms/:code` when they leave; entries expire after 30 s). The game's **Browse games** and **Quick Play** screens read it. Private games never register and are join-by-code only. After pulling this change, redeploy the Render service so it picks up the new `express` dependency.
