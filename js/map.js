@@ -280,6 +280,34 @@ export class GameMap {
     return true;
   }
 
+  // Cells that count as "inside a building": walkable but sealed off from the map border once every
+  // door, window and barricade is treated as shut. Null for maps with no outdoors at all (no open border,
+  // no MobSpawn rects), where everything is interior and the filter would leave nowhere to spawn.
+  interiorMask() {
+    if (this._interior !== undefined) return this._interior;
+    const W = this.w, H = this.h, out = new Uint8Array(W * H), q = [];
+    const open = (x, y) => x >= 0 && y >= 0 && x < W && y < H && !out[y * W + x] && !this.solid[y * W + x] && !this.dyn[y * W + x] && !this.breach[y * W + x];
+    const push = (x, y) => { if (open(x, y)) { out[y * W + x] = 1; q.push(y * W + x); } };
+    for (let x = 0; x < W; x++) { push(x, 0); push(x, H - 1); }
+    for (let y = 0; y < H; y++) { push(0, y); push(W - 1, y); }
+    // maps ringed by solid walls: the designer's MobSpawn rects mark where the outdoors is
+    const seeds = (this.markers.MobSpawn || []).flatMap((r) => this.walkableCellsIn(r));
+    for (const [x, y] of seeds) push(x, y);
+    while (q.length) { const i = q.pop(), x = i % W, y = (i / W) | 0; push(x + 1, y); push(x - 1, y); push(x, y + 1); push(x, y - 1); }
+    // out = outdoors now; count walkable cells on each side
+    let outside = 0, total = 0;
+    for (let i = 0; i < W * H; i++) { if (this.solid[i]) continue; total++; if (out[i]) outside++; }
+    if (!seeds.length && outside < total * 0.15) return (this._interior = null);
+    const inside = new Uint8Array(W * H);
+    for (let i = 0; i < W * H; i++) if (!out[i] && !this.solid[i]) inside[i] = 1;
+    return (this._interior = inside);
+  }
+
+  isInterior(cx, cy) {
+    const m = this.interiorMask();
+    return !!(m && this.inBounds(cx, cy) && m[cy * this.w + cx]);
+  }
+
   walkableCellsIn(rect) {
     const out = [];
     const x0 = Math.max(0, Math.floor(rect.x / T)), x1 = Math.min(this.w - 1, Math.floor((rect.x + rect.w - 1) / T));
