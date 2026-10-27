@@ -441,7 +441,8 @@ export class Game {
         const W = this.map.w, reach = [];
         let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
         this.flow.dist.forEach((d, i) => { if (d === -1) return; const x = i % W, y = (i / W) | 0; if (this.map.blocking(x, y)) return; reach.push([x, y]); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); });
-        this.map._ringCells = reach.filter(([x, y]) => Math.min(x - x0, x1 - x, y - y0, y1 - y) < 6);
+        const ring = reach.filter(([x, y]) => Math.min(x - x0, x1 - x, y - y0, y1 - y) < 6);
+        this.map._ringCells = ring.some(([x, y]) => !this.map.isInterior(x, y)) ? ring.filter(([x, y]) => !this.map.isInterior(x, y)) : ring;
       }
       cells = this.map._ringCells;
     }
@@ -477,6 +478,9 @@ export class Game {
       for (let i = 0; i < W * H; i++) if (seen[i]) { const x = i % W, y = (i / W) | 0; if (Math.min(x, y, W - 1 - x, H - 1 - y) < 6) cells.push([x, y]); }
       if (!cells.length) for (let i = 0; i < W * H; i++) if (seen[i]) cells.push([i % W, (i / W) | 0]);
     }
+    // buildings are the safest places: never spawn infected inside one (unless that leaves no cells)
+    const outdoor = cells.filter(([x, y]) => !map.isInterior(x, y));
+    if (outdoor.length) cells = outdoor;
     return (map._spawnCells = cells);
   }
 
