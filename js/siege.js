@@ -74,16 +74,19 @@ function analyze(g) {
   const ps = (map.markers.PlayerSpawn || [])[0];
   const sp = ps ? { x: ps.x + ps.w / 2, y: ps.y + ps.h / 2 } : { x: map.pw / 2, y: map.ph / 2 };
   const scx = Math.floor(sp.x / T), scy = Math.floor(sp.y / T);
-  let best = null, bd = 1e9;
+  let best = null, bd = 1e9, bdist = 0;
   for (const cells of comps) {
     if (cells.length < 24) continue;
     let d = 1e9;
     for (let k = 0; k < cells.length; k += 3) { const i = cells[k]; d = Math.min(d, Math.hypot((i % W) - scx, ((i / W) | 0) - scy)); }
-    d -= Math.min(20, cells.length / 40); // bigger buildings win ties
-    if (d < bd) { bd = d; best = cells; }
+    const score = d - Math.min(20, cells.length / 40) + (cells.length > 700 ? 25 : 0); // bigger buildings win ties, sprawling compounds lose
+    if (score < bd) { bd = score; bdist = d; best = cells; }
   }
   let baseCells;
-  if (best && bd < 60) baseCells = best.map((i) => [i % W, (i / W) | 0]);
+  if (best && best.length > 700) {
+    // a sprawling walled compound: camp in the part of it nearest the spawn
+    baseCells = best.map((i) => [i % W, (i / W) | 0]).filter(([x, y]) => Math.hypot(x - scx, y - scy) <= bdist + 11);
+  } else if (best && bdist < 60) baseCells = best.map((i) => [i % W, (i / W) | 0]);
   else {
     // open map: an improvised camp around the spawn
     baseCells = [];
@@ -101,17 +104,18 @@ function analyze(g) {
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const i = y * W + x;
     if (inBase.has(i) || !wall(x, y) && !map.breach[i]) continue;
-    let inside = null, out = false;
+    let inside = null, out = false, free = false;
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       const nx = x + dx, ny = y + dy;
       if (!map.inBounds(nx, ny)) continue;
       const j = ny * W + nx;
       if (inBase.has(j)) inside = [nx, ny, dx, dy];
       else if (outdoor[j]) out = true;
+      else if (!map.solid[j]) free = true; // leads on to another room
     }
-    if (inside && out && (map.dyn[i] || map.breach[i])) openings.push({ cx: x, cy: y, in: inside });
+    if (inside && (out || free) && (map.dyn[i] || map.breach[i])) openings.push({ cx: x, cy: y, in: inside });
   }
-  return { outdoor, inBase, baseCells, anchor: { x: anchor[0] * T + 16, y: anchor[1] * T + 24 }, openings, openBase: !(best && bd < 60), W };
+  return { outdoor, inBase, baseCells, anchor: { x: anchor[0] * T + 16, y: anchor[1] * T + 24 }, openings, openBase: !(best && bdist < 60) || best.length > 700, W };
 }
 
 export class Siege {
@@ -449,7 +453,7 @@ export class Siege {
     for (let i = 0; i < 40; i++) {
       const [cx, cy] = cells[(Math.random() * cells.length) | 0];
       const x = cx * T + 16, y = cy * T + 24;
-      if (!z.outdoor[cy * map.w + cx]) continue; // never inside a building
+      if (map.isInterior(cx, cy)) continue; // never inside a building
       if (map.blocking(cx, cy)) continue;
       if (Math.hypot(x - pl.x, y - pl.y) < 380) continue;
       if (Math.hypot(x - bx, y - by) < 300) continue;
@@ -465,7 +469,7 @@ export class Siege {
     const g = this.g;
     const p = this.edgePoint(front) || (front ? null : g.spawnPoint());
     if (!p) return false;
-    if (!this.zones.outdoor[Math.floor(p.y / T) * g.map.w + Math.floor(p.x / T)] && !this.zones.openBase) return false;
+    if (g.map.isInterior(Math.floor(p.x / T), Math.floor((p.y - 2) / T))) return false;
     const n = this.c.night, eq = (n - 1) * 55 + (this.waveIdx || 0) * 8;
     const open = g.groups.filter((gr) => eq >= gr.unlock);
     let id = null;

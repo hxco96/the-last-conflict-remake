@@ -1276,7 +1276,7 @@ export class Game {
     else if (nxt) {
       tx = nxt[0] * T + 16; ty = nxt[1] * T + 22;
       const dyn = map.dyn[map.idx(nxt[0], nxt[1])];
-      if (dyn && map.blocking(nxt[0], nxt[1]) && Math.hypot(tx - m.x, ty - 6 - m.y) < 30) bash = dyn;
+      if (dyn && map.blocking(nxt[0], nxt[1], false, true) && Math.hypot(tx - m.x, ty - 6 - m.y) < 30) bash = dyn;
     } else {
       // no route: idle shamble
       m.wander = (m.wander || 0) - dt;
