@@ -142,20 +142,25 @@ function burst({ dur = 0.1, freq = 1200, q = 0.8, vol = 0.4, type = 'lowpass' })
 export function music(name, force = false) {
   musicWant = name;
   if (!index || !index.music.length) return;
-  if (!force && musicName === name && musicEl && !musicEl.paused) return;
+  if (!force && (musicName === name || (name === 'playlist' && musicName)) && musicEl && !musicEl.paused) return;
   const pickNext = () => {
     if (name !== 'playlist') return byName.get(name);
     if (!musicList.length) musicList = index.music.filter((m) => !/save room|secure place|room\(re3\)|boss|^sake\b/i.test(m.name)).sort(() => Math.random() - 0.5);
     return musicList.shift();
   };
-  const e = pickNext();
+  // a track that is missing from a stale cached index (or fails to decode) falls back to the
+  // original Sake rather than leaving the base silent
+  const e = pickNext() || (/^sake\b/i.test(name) ? byName.get('Sake') : null);
   if (!e) return;
   if (!musicEl) {
     musicEl = new Audio();
     musicEl.preload = 'auto';
+    musicEl.addEventListener('error', () => {
+      if (/tethered/i.test(musicName) && byName.get('Sake')) { musicName = 'Sake'; musicEl.src = 'assets/audio/' + byName.get('Sake').file; musicEl.play().catch(() => {}); }
+    });
     musicEl.addEventListener('ended', () => { if (musicWant === 'playlist') music('playlist', true); else { musicEl.currentTime = 0; musicEl.play().catch(() => {}); } });
   }
-  musicName = name;
+  musicName = e.name;
   musicEl.src = 'assets/audio/' + e.file;
   applyVolumes();
   musicEl.play().catch(() => { /* waits for a user gesture; unlockAudio retries */ });

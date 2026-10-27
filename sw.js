@@ -1,7 +1,7 @@
 // Offline support. The core game (~9 MB) is cached at install; maps and audio are cached the first
 // time they are played (or all at once via Settings → "Download everything for offline").
 // Bump VERSION whenever files change so installed copies update.
-const VERSION = 'tlcr-v10';
+const VERSION = 'tlcr-v11';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest',
   'js/main.js', 'js/assets.js', 'js/data.js', 'js/game.js', 'js/map.js', 'js/nav.js', 'js/actors.js',
@@ -16,7 +16,8 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's HTTP cache so a new version never installs stale files
+  e.waitUntil(caches.open(VERSION).then((c) => Promise.all(SHELL.map((u) => c.add(new Request(u, { cache: 'reload' }))))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -40,7 +41,7 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   if (req.method !== 'GET' || url.origin !== location.origin) return;
   const key = url.origin + url.pathname; // ignore query strings
-  const isCode = /\.(html|js|webmanifest)$/.test(url.pathname) || url.pathname.endsWith('/');
+  const isCode = /\.(html|js|webmanifest)$/.test(url.pathname) || url.pathname.endsWith('/') || /\/index\.json$/.test(url.pathname); // indexes list the files, so they update with the code
 
   e.respondWith((async () => {
     const cache = await caches.open(VERSION);
