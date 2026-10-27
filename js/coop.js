@@ -130,7 +130,7 @@ export class Coop {
     N.on('ss', (m) => { if (this.client && this.session) this.session.applyState(m); });
     N.on('vote', (m, from) => { if (this.host && this.session) this.session.remoteVote(from, m.cat, m.value); });
     N.on('join', (m, from) => { if (this.host && this.session) this.session.remoteJoin(from, m.on); });
-    N.on('soon', () => { if (this.host && this.session) this.session.startSoon(); });
+    N.on('soon', () => { if (this.host && this.session && this.session.autoStart) this.session.startSoon(); });
     N.on('start', (m) => { if (this.client && this.session) this.session.startMatch(m); });
     N.on('end', (m) => { if (this.client && this.session) this.session.hostEnded(m); });
     N.on('chat', (m, from) => { if (this.host) this.net.broadcast(m, from); const g = this.session && this.session.active; if (g) g.msg(`${m.n}: ${m.text}`, '#9cd4ff'); });

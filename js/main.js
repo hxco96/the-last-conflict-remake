@@ -515,7 +515,8 @@ function showBoard() {
   const mapsList = assets.mapIndex.map((m, i) => i).filter((i) => assets.mapIndex[i].name !== 'Base'); // same choices for host pick and vote
   const status = S.state === 'running'
     ? `Round ${S.round} is running on ${S.match.opts.map.name}.`
-    : `Next round in ${Math.ceil(S.timer)}s — ${S.joined ? 'you are in' + (S.autoDeploy ? ' (auto-deploy)' : ' (you will walk in)') : 'you have not joined'}.`;
+    : !S.autoStart ? 'Auto-start is OFF — the host starts the next round.'
+    : `Next round in ${Math.ceil(S.timer)}s — everyone in the room drops in automatically. ${S.joined ? 'you are in' + (S.autoDeploy ? ' (auto-deploy)' : ' (you will walk in)') : 'you have not joined'}.`;
   open('board', closePanel, el('div', { class: 'panel wide' },
     el('h2', {}, 'Mission board'),
     el('p', { class: 'sub' }, status),
@@ -526,7 +527,10 @@ function showBoard() {
       S.state !== 'running' ? el('button', { class: 'pick small', onclick: () => { S.join(false); showBoard(); } }, el('b', {}, 'Join — I\'ll walk in')) : null,
       S.joined && S.state !== 'running' ? el('button', { class: 'pick small', onclick: () => { S.leaveQueue(); showBoard(); } }, el('b', {}, 'Leave')) : null,
       S.state === 'running' && S.match.ghost ? el('button', { class: 'pick small', onclick: () => { closePanel(); S.spectate(true); } }, el('b', {}, '👁 Spectate')) : null,
-      S.state === 'intermission' && S.joined ? el('button', { class: 'pick small', onclick: () => { S.startSoon(); closePanel(); } }, el('b', {}, '⏩ Start now')) : null),
+      S.state === 'intermission' && S.autoStart && (S.joined || S.coop) ? el('button', { class: 'pick small', onclick: () => { S.startSoon(); closePanel(); } }, el('b', {}, '⏩ Start now')) : null),
+    S.coop && S.coop.client ? null : el('div', { class: 'row' },
+      el('button', { class: 'pick small' + (S.autoStart ? ' on' : ''), onclick: () => { S.setAutoStart(!S.autoStart); showBoard(); } }, el('b', {}, S.autoStart ? 'Auto-start rounds: ON' : 'Auto-start rounds: OFF (host-run)')),
+      !S.autoStart && S.state === 'intermission' ? el('button', { class: 'go', onclick: () => { S.hostGo(); closePanel(); } }, 'START MATCH NOW') : null),
     S.coop && S.coop.client ? null : el('div', { class: 'tabs' }, ...[['host', 'Host pick'], ['vote', 'Vote']].map(([id, name]) => el('button', { class: 'tab' + (boardTab === id ? ' on' : ''), onclick: () => { boardTab = id; S.hostMode = id === 'host'; S.broadcastState(); showBoard(); } }, name))),
     boardTab === 'vote' ? el('p', { class: 'sub left' }, S.coop ? (S.coop.client && S.hostMode ? 'The host is picking this round — your vote is shown to them.' : 'Each player gets one vote per category; the most-voted option wins (ties: host).') : 'Each player gets one vote per category; the most-voted option wins (ties: host). Solo: your vote decides.') : null,
     S.coop ? el('p', { class: 'sub' }, `Room ${S.coop.code} · ${S.coop.count}/4 players — share the code to invite friends.`) : null,
@@ -549,9 +553,40 @@ function showPause() {
       el('button', { class: 'pick', onclick: () => showSettings(showPause) }, el('b', {}, '⚙ Settings')),
       canFs() && !standalone() ? el('button', { class: 'pick', onclick: () => { if (fsEl()) exitFullscreen(); else goFullscreen(true); closePanel(); } }, el('b', {}, fsEl() ? '⛶ Exit fullscreen' : '⛶ Fullscreen')) : null,
       inMatch ? el('button', { class: 'pick', onclick: () => { closePanel(); session.retreat(); } }, el('b', {}, '🏳 Retreat to base')) : null,
-      el('button', { class: 'pick', onclick: () => { choice.changing = true; leaveSession(); } }, el('b', {}, 'Change class / survivor')),
+      el('button', { class: 'pick', onclick: () => (session ? showChange() : (choice.changing = true, leaveSession())) }, el('b', {}, 'Change class / survivor')),
       el('button', { class: 'pick', onclick: () => { choice.changing = false; leaveSession(); } }, el('b', {}, session && session.coop ? 'Leave co-op' : 'Quit to title'))),
     el('p', { class: 'help' }, controlsHelp())));
+}
+
+// Swap class / survivor without leaving the room (co-op included). Takes effect in the lobby at once, in a round from the next deploy.
+function showChange() {
+  previews.length = 0;
+  const S = session;
+  if (!S) return showMenu();
+  const look = LOOKS[choice.look];
+  const apply = () => {
+    savePrefs();
+    S.cls = choice.cls; S.look = LOOKS[choice.look];
+    const g = S.lobby;
+    if (g && g.player) {
+      g.opts.cls = choice.cls; g.opts.look = S.look; g.cls = CLASSES[choice.cls]; g.perks = new Set(g.cls.perks);
+      g.female = /jill|claire/i.test(S.look.name); g.player.look = S.look; g.player.cls = choice.cls;
+    }
+    if (S.coop) { S.coop.me.cls = choice.cls; S.coop.me.look = choice.look; }
+    showChange();
+  };
+  const live = S.view === 'match';
+  open('change', showPause, el('div', { class: 'panel wide' },
+    el('h2', {}, 'Change class / survivor'),
+    el('p', { class: 'sub' }, live ? 'You are in a round — the change applies the next time you deploy.' : 'Applies right away. You stay in the room.'),
+    el('div', { class: 'row' }, ...Object.keys(CLASSES).map((name) => el('button', { class: 'pick' + (name === choice.cls ? ' on' : ''), 'data-focus': name === choice.cls || null, onclick: () => { choice.cls = name; apply(); } }, el('b', {}, name), el('small', {}, (CLASS_INFO[name] || {}).tag || '')))),
+    previewCanvas(look, 128),
+    el('div', { class: 'row' },
+      el('button', { class: 'pick small', onclick: () => { choice.look = (choice.look + LOOKS.length - 1) % LOOKS.length; apply(); } }, '◀'),
+      el('b', { class: 'name' }, look.name),
+      el('button', { class: 'pick small', onclick: () => { choice.look = (choice.look + 1) % LOOKS.length; apply(); } }, '▶')),
+    el('div', { class: 'looks' }, ...LOOKS.map((l, i) => el('button', { class: i === choice.look ? 'on' : '', title: l.name, onclick: () => { choice.look = i; apply(); } }, lookCanvas(l)))),
+    el('button', { class: 'go', onclick: showPause }, 'Back')));
 }
 
 function showInventory() {

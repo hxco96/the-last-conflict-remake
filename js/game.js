@@ -853,13 +853,14 @@ export class Game {
     else if (target.type === 'rescue') rescueSurvivor(this, target.n);
     else if (target.type === 'door') {
       const d = target.d;
-      if (d.open && this.map.boxHits(pl.x, pl.y, pl.hw, pl.hh)) return;
       const occupied = this.mobs.some((m) => m.alive && Math.floor(m.x / T) === d.cx && Math.floor((m.y - 2) / T) === d.cy);
       if (d.open && occupied) return;
       d.open = !d.open;
       d.bash = 0;
       this.flowT = 0;
       play.door(d.open, d.x + 16, d.y + 16);
+      // closing on yourself shoves you clear instead of trapping you in the frame
+      if (!d.open && this.map.boxHits(pl.x, pl.y, pl.hw, pl.hh)) this.unstick(pl);
     } else if (target.type === 'board') {
       const c = target.c;
       const n = this.items.get('Boards') || 0;
@@ -1084,6 +1085,10 @@ export class Game {
         if (!pl.jumpT) this.unstick(pl);
       } else if (pl.jumpT <= 0) { pl.jumpT = 0; pl.landGrace = 0; play.step(pl.x, pl.y); }
     }
+    if (!pl.jumpT && this.map.boxHits(pl.x, pl.y, pl.hw, pl.hh)) {
+      pl.stuckT = (pl.stuckT || 0) + dt;
+      if (pl.stuckT > 0.15) { this.unstick(pl); pl.stuckT = 0; }
+    } else pl.stuckT = 0;
     if (pl.down) { this.updateDowned(dt); return; }
     const s = this.slots[this.cur];
 

@@ -34,6 +34,8 @@ export class Session {
     this.myVote = {};
     this.joined = false;
     this.autoDeploy = true;
+    this.autoStart = true;         // host option: rounds start (and drop everyone in) on their own
+    this.force = false;            // host pressed Start with auto-start off
     this.match = null;
     this.view = 'lobby';           // 'lobby' | 'spectate' | 'match'
     this.round = 0;
@@ -107,17 +109,25 @@ export class Session {
     if (this.coop && this.coop.client) { this.coop.net.toHost({ t: 'soon' }); return; }
     if (this.state === 'intermission') this.timer = Math.min(this.timer, 3);
   }
-  get anyoneJoined() { return this.joined || this.joinedPeers.size > 0; }
+  // host with auto-start off: launch the round now, taking everyone who is in the room
+  hostGo() {
+    if (this.state !== 'intermission' || (this.coop && this.coop.client)) return;
+    this.force = true; this.joined = true; this.dropAll = true; this.timer = 0;
+  }
+  setAutoStart(on) { this.autoStart = on; this.force = false; if (on && this.timer <= 0) this.timer = 3; this.broadcastState(); }
+  get anyoneJoined() { return this.autoStart || this.joined || this.joinedPeers.size > 0; }
+  // in the lobby with a match running (or about to): you're dropped in without queuing
+  get dropIn() { return this.autoStart || this.joined || this.dropAll; }
 
   // ---------- co-op state sync ----------
   broadcastState() {
     if (!this.coop || !this.coop.host) return;
     const tallies = {};
     for (const v of this.votes.values()) for (const [cat, val] of Object.entries(v)) { tallies[cat] = tallies[cat] || {}; tallies[cat][val] = (tallies[cat][val] || 0) + 1; }
-    this.coop.net.broadcast({ t: 'ss', state: this.state, timer: this.timer, next: this.next, round: this.round, ballot: this.ballot, hostMode: this.hostMode, tallies, joined: this.joinedPeers.size + (this.joined ? 1 : 0) });
+    this.coop.net.broadcast({ t: 'ss', state: this.state, timer: this.timer, next: this.next, round: this.round, ballot: this.ballot, hostMode: this.hostMode, tallies, joined: this.joinedPeers.size + (this.joined ? 1 : 0), auto: this.autoStart });
   }
   applyState(m) {
-    this.timer = m.timer; this.next = m.next; this.ballot = m.ballot; this.hostMode = m.hostMode; this.tallies = m.tallies; this.joinedCount = m.joined;
+    this.timer = m.timer; this.next = m.next; this.ballot = m.ballot; this.hostMode = m.hostMode; this.tallies = m.tallies; this.joinedCount = m.joined; if (m.auto !== undefined) this.autoStart = m.auto;
     this.hostState = m.state; // the client's own state follows the host's start/end messages
   }
 
@@ -132,7 +142,9 @@ export class Session {
     if (this.state === 'intermission' && client) this.timer = Math.max(0, this.timer - dt); // the host starts rounds
     else if (this.state === 'intermission') {
       this.timer -= dt;
-      if (this.timer <= 0) {
+      if (this.timer <= 0 && !this.autoStart && !this.force) this.timer = 0; // host-run: hold until Start
+      else if (this.timer <= 0) {
+        this.force = false;
         if (this.anyoneJoined) this.startMatch();
         else {
           this.timer = INTERMISSION;
@@ -247,12 +259,14 @@ export class Session {
     try { await m.start(); } catch (err) { this.starting = false; this.state = 'intermission'; this.timer = INTERMISSION; throw err; }
     m.session = this;
     // co-op: everyone starts together at a spot the host picks
-    if (this.coop && this.coop.host) { m.teamSpawn = m.pickSpawn(); this.coop.net.broadcast({ t: 'start', round: this.round, next: { ...n }, spawn: m.teamSpawn }); }
-    else if (msg && msg.spawn) m.teamSpawn = msg.spawn;
+    if (this.coop && this.coop.host) { m.teamSpawn = m.pickSpawn(); this.coop.net.broadcast({ t: 'start', round: this.round, next: { ...n }, spawn: m.teamSpawn, all: this.autoStart || this.dropAll }); }
+    else if (msg && msg.spawn) { m.teamSpawn = msg.spawn; this.dropAll = !!msg.all; }
     this.match = m;
     this.starting = false;
     this.state = 'running';
-    if (this.joined && this.autoDeploy && this.view === 'lobby') this.deploy();
+    const drop = this.dropIn && this.autoDeploy && this.view === 'lobby';
+    this.dropAll = false;
+    if (drop) this.deploy();
     else this.lobby.msg('Match started without you — walk out a DEPLOY door to join, or spectate from the mission board.', '#7dff8a');
   }
 
@@ -315,14 +329,15 @@ export class Session {
     const room = this.coop ? `ROOM ${this.coop.code} ${this.coop.count}/4 · ` : '';
     if (this.state === 'running' && this.match) {
       const o = this.match.opts;
-      return { label: `ROUND ${this.round} LIVE`, clock: clock(this.match.time || 0), map: o.map.name, line: room + rules(o), status: 'IN PROGRESS — walk out a green DEPLOY door', color: '#7dff8a' };
+      return { label: `ROUND ${this.round} LIVE`, clock: clock(this.match.time || 0), map: o.map.name, line: room + rules(o), status: this.dropIn && this.autoDeploy ? 'IN PROGRESS — dropping you in' : 'IN PROGRESS — walk out a green DEPLOY door', color: '#7dff8a' };
     }
     const n = this.next, name = this.assets.mapIndex[n.map].name;
     if (this.state === 'starting') return { label: 'STARTING', clock: '…', map: name, line: room + rules(n), status: 'DEPLOYING…', color: '#ffd36b' };
     const t = Math.max(0, Math.ceil(this.timer));
     const others = this.coop ? (this.coop.host ? this.joinedPeers.size : Math.max(0, (this.joinedCount || 0) - (this.joined ? 1 : 0))) : 0;
     const team = others ? ` · ${others} teammate${others > 1 ? 's' : ''} in` : '';
-    const status = this.joined ? (this.autoDeploy ? `JOINED ✓ — deploying at the start${team}` : `JOINED ✓ — walk out a DEPLOY door${team}`) : `NOT JOINED — open the mission board${team}`;
-    return { label: 'NEXT ROUND', clock: clock(t), urgent: t <= 10, map: name, line: room + rules(n), status, color: this.joined ? '#7dff8a' : '#ffb347' };
+    if (!this.autoStart) return { label: 'HOST-RUN', clock: '--:--', map: name, line: room + rules(n), status: 'WAITING FOR THE HOST TO START — gear up', color: '#ffb347' };
+    const status = this.autoStart ? `AUTO-START ✓ — you drop in automatically${team}` : this.joined ? (this.autoDeploy ? `JOINED ✓ — deploying at the start${team}` : `JOINED ✓ — walk out a DEPLOY door${team}`) : `NOT JOINED — open the mission board${team}`;
+    return { label: 'NEXT ROUND', clock: clock(t), urgent: t <= 10, map: name, line: room + rules(n), status, color: this.dropIn ? '#7dff8a' : '#ffb347' };
   }
 }

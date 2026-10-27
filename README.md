@@ -148,3 +148,8 @@ Default keyboard/mouse:
 `tools/extract.js` exports all 349 sound effects and 28 music tracks from the original banks to `assets/audio/` (≈29 MB) with a manifest. Gunshots are matched to each weapon by name (e.g. `spas-12-fire`, `ak47-fire`), mobs use their family's moan/attack/pain/death sets, and the player's hurt/death sounds follow the survivor's gender. Music: *Save Room (RE0)* on the menu, a shuffled playlist in game, *Plant 42 – Boss Theme* when a boss appears, *Secure Place* on death. Volumes are in Settings → Gameplay; M mutes.
 
 Event-to-sample mapping is by sample name. The original FMOD event graph (`sound-events.rktd` GUIDs) was not decoded. Ogg Vorbis plays in Chrome, Edge, Firefox and Android; older iOS Safari versions may not decode Ogg.
+
+## Drop-in rounds, host-run matches, doors
+- Rounds auto-start and drop everyone in the room (including late joiners) — no queuing. The host can turn **Auto-start rounds** off on the mission board and press **Start match now** when ready.
+- **Change class / survivor** from the pause menu without leaving the room; settings are there too.
+- Closing a door on yourself now shoves you clear, and being wedged inside a solid tile frees you automatically.
