@@ -150,6 +150,10 @@ Default keyboard/mouse:
 
 Event-to-sample mapping is by sample name. The original FMOD event graph (`sound-events.rktd` GUIDs) was not decoded. Ogg Vorbis plays in Chrome, Edge, Firefox and Android; older iOS Safari versions may not decode Ogg.
 
+## Optional: your own free matchmaking server
+
+Co-op connects through the free public PeerJS matchmaker by default. For more reliable rooms (no shared rate limits) deploy the tiny signaling server in `server/` for free on Render (one click via `render.yaml`, steps in `server/README.md`), then set `BROKER` in `js/config.js`. The game tries your server first and falls back to the public one automatically. `js/config.js` also lists extra STUN/TURN relays so phones on mobile data can connect. Test any server with `?broker=host:port` in the URL on every device.
+
 ## Drop-in rounds, host-run matches, doors
 - Rounds auto-start and drop everyone in the room (including late joiners) — no queuing. The host can turn **Auto-start rounds** off on the mission board and press **Start match now** when ready.
 - **Change class / survivor** from the pause menu without leaving the room; settings are there too.

@@ -4,6 +4,8 @@
 //   5 letters; the host's peer id is `tlcr-<code>`.
 // * `?net=local` swaps in a BroadcastChannel transport so several tabs of the same browser can
 //   play together (used for testing, works offline).
+import { BROKER, ICE_SERVERS } from './config.js';
+
 const PEERJS_URL = 'js/vendor/peerjs.min.js'; // PeerJS 1.5.4 (MIT), vendored so it works without a CDN
 const PREFIX = 'tlcr-remake-';
 export const MAX_PLAYERS = 4;
@@ -19,6 +21,16 @@ const friendly = (e) => {
   return e instanceof Error ? e : new Error(String((e && e.message) || e));
 };
 const randomCode = () => Array.from({ length: 5 }, () => ALPHABET[(Math.random() * ALPHABET.length) | 0]).join('');
+// Matchmaking servers to try in order: ?broker=host[:port] (testing) or config.js BROKER (your own server, see
+// server/), then the free public PeerJS cloud (null). A room lives on whichever server the host reached.
+function brokers() {
+  const list = [];
+  const q = new URLSearchParams(location.search).get('broker');
+  if (q) { const [host, port] = q.split(':'); const p = +port || 443; list.push({ host, port: p, path: '/', secure: p === 443 }); }
+  else if (BROKER) list.push(BROKER);
+  list.push(null);
+  return list;
+}
 const localMode = () => /[?&]net=local\b/.test(location.search);
 const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(what + ' timed out')), ms))]);
 
@@ -100,27 +112,33 @@ export class Net {
     if (f) { try { f(msg, from); } catch (e) { console.error('net handler', msg.t, e); } }
   }
 
-  async makePeer(id) {
+  async makePeer(id, broker = null) {
     if (localMode()) return new LocalPeer(id);
     const Peer = await loadPeerJS();
-    return new Peer(id, { debug: 0 });
+    // extra STUN/TURN on top of PeerJS's defaults so phones on mobile data can still connect
+    return new Peer(id, { debug: 0, ...(broker || {}), config: { iceServers: ICE_SERVERS, sdpSemantics: 'unified-plan' } });
   }
 
   async host() {
     this.role = 'host';
     this.id = 'H';
-    for (let attempt = 0; attempt < 4; attempt++) {
-      this.code = randomCode();
-      try {
-        const peer = await this.makePeer(PREFIX + this.code);
-        await withTimeout(new Promise((res, rej) => { peer.on('open', res); peer.on('error', rej); }), 12000, 'connecting to the matchmaker');
-        this.peer = peer;
-        break;
-      } catch (e) {
-        if (!/unavailable|taken/i.test(String(e && (e.type || e.message)))) throw friendly(e);
+    let lastErr = null;
+    for (const broker of brokers()) {
+      for (let attempt = 0; attempt < 4 && !this.peer; attempt++) {
+        this.code = randomCode();
+        try {
+          const peer = await this.makePeer(PREFIX + this.code, broker);
+          await withTimeout(new Promise((res, rej) => { peer.on('open', res); peer.on('error', rej); }), broker ? 9000 : 12000, 'connecting to the matchmaker');
+          this.peer = peer;
+          this.broker = broker;
+        } catch (e) {
+          lastErr = e;
+          if (!/unavailable|taken/i.test(String(e && (e.type || e.message)))) break; // this server is unreachable: try the next one
+        }
       }
+      if (this.peer) break;
     }
-    if (!this.peer) throw new Error('could not reserve a room code');
+    if (!this.peer) throw lastErr ? friendly(lastErr) : new Error('could not reserve a room code');
     this.peer.on('error', (e) => console.warn('peer error', e && e.type));
     // keep the room code reachable if the matchmaker connection drops (open games keep playing)
     this.peer.on('disconnected', () => { if (!this.closed) setTimeout(() => { try { if (!this.closed && this.peer.disconnected) this.peer.reconnect(); } catch { /* gone */ } }, 2000); });
@@ -142,18 +160,30 @@ export class Net {
   async join(code) {
     this.role = 'client';
     this.code = code.trim().toUpperCase();
-    const peer = await this.makePeer();
-    await withTimeout(new Promise((res, rej) => { peer.on('open', res); peer.on('error', (e) => rej(friendly(e))); }), 12000, 'connecting to the matchmaker');
-    this.peer = peer;
-    const conn = peer.connect(PREFIX + this.code, { reliable: true });
-    const welcome = await withTimeout(new Promise((res, rej) => {
-      peer.on('error', (e) => rej(friendly(e)));
-      conn.on('data', (m) => {
-        if (m.t === 'welcome') res(m);
-        else if (m.t === 'full') rej(new Error('that game is full (4 players)'));
-        else this.dispatch('H', m);
-      });
-    }), 15000, 'joining the game');
+    let conn = null, welcome = null, lastErr = null;
+    for (const broker of brokers()) {
+      let peer = null;
+      try {
+        peer = await this.makePeer(undefined, broker);
+        await withTimeout(new Promise((res, rej) => { peer.on('open', res); peer.on('error', (e) => rej(friendly(e))); }), broker ? 9000 : 12000, 'connecting to the matchmaker');
+        const c = peer.connect(PREFIX + this.code, { reliable: true });
+        welcome = await withTimeout(new Promise((res, rej) => {
+          peer.on('error', (e) => rej(friendly(e)));
+          c.on('data', (m) => {
+            if (m.t === 'welcome') res(m);
+            else if (m.t === 'full') rej(new Error('that game is full (4 players)'));
+            else this.dispatch('H', m);
+          });
+        }), broker ? 9000 : 15000, 'joining the game');
+        this.peer = peer; this.broker = broker; conn = c;
+        break;
+      } catch (e) {
+        lastErr = e;
+        try { peer && peer.destroy(); } catch { /* gone */ }
+        if (/full/.test(String(e && e.message))) throw e; // a real answer, not a routing miss
+      }
+    }
+    if (!conn) throw lastErr || new Error('no game with that code');
     this.id = welcome.id;
     this.conns.set('H', conn);
     conn.on('close', () => { if (!this.closed) this.onLost(); });

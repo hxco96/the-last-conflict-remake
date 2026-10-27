@@ -1,0 +1,10 @@
+{
+  "name": "tlcr-peer-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Matchmaking (signaling) server for The Last Conflict co-op. Only brokers the WebRTC handshake; game traffic goes peer to peer.",
+  "main": "index.js",
+  "scripts": { "start": "node index.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "peer": "^1.0.2" }
+}

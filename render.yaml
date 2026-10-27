@@ -1,0 +1,10 @@
+# One-click free hosting for the co-op matchmaking server: https://render.com -> New -> Blueprint -> pick this repo.
+services:
+  - type: web
+    name: tlcr-peer
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node index.js
+    healthCheckPath: /
