@@ -3,7 +3,7 @@
 //   vote on — the next map, mode, theme and difficulty.
 // * When the timer ends the match starts only if at least one player joined the round.
 //   Joined players either deploy straight away, or stay in the lobby to shop / spectate and
-//   walk out through a DEPLOY door whenever they like.
+//   walk north into the DEPLOY GATE whenever they like.
 // * When the match ends (everyone deployed is dead, objective won, or nobody ever deployed)
 //   coins are paid out from kills, time alive and difficulty, and the next intermission starts.
 // Online co-op (coop.js): the host runs the timer, tallies everyone's votes and starts/ends rounds;
@@ -56,7 +56,7 @@ export class Session {
     this.lobby.onStorage = () => this.ui.storage();
     this.lobby.onArmory = (c) => this.ui.armory(c);
     this.lobby.onDeploy = () => this.deploy();
-    this.lobby.msg('Welcome to the base. Gear up at the ARMORY tables, upgrade with the merchant, vote at the mission board.', '#9cd4ff');
+    this.lobby.msg('Welcome to the base. Gear up at the ARMORY, upgrade with the merchant, vote at the mission board. To play: walk NORTH up the hall into the green DEPLOY GATE.', '#9cd4ff');
     music(this.lobbyTrack());
     if (this.coop) {
       this.coop.session = this;
@@ -267,7 +267,7 @@ export class Session {
     const drop = this.dropIn && this.autoDeploy && this.view === 'lobby';
     this.dropAll = false;
     if (drop) this.deploy();
-    else this.lobby.msg('Match started without you — walk out a DEPLOY door to join, or spectate from the mission board.', '#7dff8a');
+    else this.lobby.msg('Match started without you — walk north into the DEPLOY GATE to join, or spectate from the mission board.', '#7dff8a');
   }
 
   deploy() {
@@ -329,7 +329,7 @@ export class Session {
     const room = this.coop ? `ROOM ${this.coop.code} ${this.coop.count}/4 · ` : '';
     if (this.state === 'running' && this.match) {
       const o = this.match.opts;
-      return { label: `ROUND ${this.round} LIVE`, clock: clock(this.match.time || 0), map: o.map.name, line: room + rules(o), status: this.dropIn && this.autoDeploy ? 'IN PROGRESS — dropping you in' : 'IN PROGRESS — walk out a green DEPLOY door', color: '#7dff8a' };
+      return { label: `ROUND ${this.round} LIVE`, clock: clock(this.match.time || 0), map: o.map.name, line: room + rules(o), status: this.dropIn && this.autoDeploy ? 'IN PROGRESS — dropping you in' : 'IN PROGRESS — walk NORTH into the DEPLOY GATE', color: '#7dff8a' };
     }
     const n = this.next, name = this.assets.mapIndex[n.map].name;
     if (this.state === 'starting') return { label: 'STARTING', clock: '…', map: name, line: room + rules(n), status: 'DEPLOYING…', color: '#ffd36b' };
@@ -337,7 +337,7 @@ export class Session {
     const others = this.coop ? (this.coop.host ? this.joinedPeers.size : Math.max(0, (this.joinedCount || 0) - (this.joined ? 1 : 0))) : 0;
     const team = others ? ` · ${others} teammate${others > 1 ? 's' : ''} in` : '';
     if (!this.autoStart) return { label: 'HOST-RUN', clock: '--:--', map: name, line: room + rules(n), status: 'WAITING FOR THE HOST TO START — gear up', color: '#ffb347' };
-    const status = this.autoStart ? `AUTO-START ✓ — you drop in automatically${team}` : this.joined ? (this.autoDeploy ? `JOINED ✓ — deploying at the start${team}` : `JOINED ✓ — walk out a DEPLOY door${team}`) : `NOT JOINED — open the mission board${team}`;
+    const status = this.autoStart ? `AUTO-START ✓ — you drop in automatically${team}` : this.joined ? (this.autoDeploy ? `JOINED ✓ — deploying at the start${team}` : `JOINED ✓ — walk NORTH into the DEPLOY GATE${team}`) : `NOT JOINED — open the mission board${team}`;
     return { label: 'NEXT ROUND', clock: clock(t), urgent: t <= 10, map: name, line: room + rules(n), status, color: this.dropIn ? '#7dff8a' : '#ffb347' };
   }
 }
