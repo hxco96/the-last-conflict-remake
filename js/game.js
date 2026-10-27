@@ -1689,7 +1689,7 @@ export class Game {
     for (const n of [...(this.npcs || []), ...(this.npcMirror || [])]) if (n.alive && !n.dead) dot(n.x, n.y, 1.5 * u, '#9cff9c');
     if (this.ext && this.ext.heli) { const h = this.ext.heli; dot(h.tx ?? h.x, h.ty ?? h.y, 3 * u, '#ffd36b'); }
     if (this.ext && this.ext.siege && this.ext.siege.ready) { const sg = this.ext.siege; dot(sg.zones.anchor.x, sg.zones.anchor.y, 3 * u, '#ffd36b'); for (const p of sg.piles) dot(p.x, p.y, 1.4 * u, '#c8a45a'); }
-    if (this.ext && this.ext.deployDoors) for (const d of this.ext.deployDoors) dot(d.x + 16, d.y + 16, 2 * u, '#7dff8a');
+    if (this.ext && this.ext.gate) { const z = this.ext.gate; dot(z.x + z.w / 2, z.y + z.h / 2, 3 * u, '#7dff8a'); }
     // teammates: big blue dots with their initial, red when down
     if (this.avatars) {
       ctx.font = `${Math.round(8 * u)}px Bebas, sans-serif`; ctx.textAlign = 'center';

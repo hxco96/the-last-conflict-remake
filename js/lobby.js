@@ -2,8 +2,8 @@
 // row of tables next to the spawn (two categories per table); walk up to any table to open the
 // armory screen on that category (tabs switch between all categories without walking). Walk up to a
 // table to buy/equip, talk to the merchant for permanent upgrades, use the mission
-// board to host-pick or vote the next round, and walk out through the DEPLOY doors to join a
-// match that is already running.
+// board to host-pick or vote the next round, and walk north into the DEPLOY GATE (a glowing pad in the
+// main hall, lit by arrows from the spawn) to join a match that is already running.
 import { T } from './map.js';
 import { Player } from './actors.js';
 import { randomLook } from './npc.js';
@@ -74,13 +74,31 @@ export class LobbyExt {
     const apart = (dx, dy) => { for (let k = 0; k < 20; k++) { const p = near(dx, dy); if (taken.every((t) => Math.hypot(t.x - p.x, t.y - p.y) > 48)) { taken.push(p); return p; } } const p = near(dx, dy); taken.push(p); return p; };
     this.merchantPos = apart(-3, -1);
     this.boardPos = apart(3, -1);
-    this.storagePos = apart(0, -3);
+    this.storagePos = apart(-3, 2); // off the main hall, so the way to the deploy gate stays clear
     const look = randomLook('survivor', g.atlas.core);
     this.merchant = new Player(this.merchantPos.x, this.merchantPos.y, look, 'merchant');
     this.merchant.dir = 's';
-    // DEPLOY doors: the two doors farthest from the spawn (the way out of the base)
-    this.deployDoors = [...map.doors].sort((a, b) => Math.hypot(b.x - this.spawn.x, b.y - this.spawn.y) - Math.hypot(a.x - this.spawn.x, a.y - this.spawn.y)).slice(0, 2);
-    for (const d of this.deployDoors) { d.open = false; d.deploy = true; }
+    this.placeGate();
+  }
+
+  // DEPLOY GATE: the main hall's checkpoint doors / fences just north of the spawn are removed (so the way is
+  // open, no door to find or button to press) and the vestibule beyond becomes the deploy pad: walk in while a
+  // round is live and you drop into it.
+  placeGate() {
+    const map = this.g.map, sx = this.spawn.x, sy = this.spawn.y;
+    const near = (o) => Math.abs(o.x + 16 - sx) < 4.5 * T && o.y < sy - 2 * T;
+    const row = [...map.doors, ...map.cades].filter(near).reduce((m, o) => Math.max(m, o.cy), -1); // nearest checkpoint row
+    if (row >= 0) {
+      map.doors = map.doors.filter((d) => !(near(d) && d.cy === row));
+      map.cades = map.cades.filter((c) => !(near(c) && c.cy === row));
+      for (let cx = Math.floor(sx / T) - 5; cx <= Math.floor(sx / T) + 5; cx++) {
+        const i = map.idx(cx, row), d = map.dyn[i];
+        if (d && (d.kind === 'door' || d.kind === 'cade')) map.dyn[i] = null;
+      }
+    }
+    // pad: the open hall cells in the three rows past the checkpoint (or straight north of the spawn on other maps)
+    const gy = (row >= 0 ? row : Math.floor(sy / T) - 6) - 8;
+    this.gate = { x: sx - 3 * T, y: gy * T, w: 6 * T, h: 3 * T };
   }
 
   stock() {
@@ -118,8 +136,10 @@ export class LobbyExt {
   armoryCells(n) {
     const g = this.g, map = g.map, ts = this.tableSet();
     const rowLen = Math.min(6, n), rows = Math.ceil(n / rowLen), H = rows * 3; // table, face, aisle per row
-    const keepClear = [this.merchantPos, this.boardPos, this.storagePos, ...this.deployDoors.map((d) => ({ x: d.x + 16, y: d.y + 16 }))].filter(Boolean);
+    const keepClear = [this.merchantPos, this.boardPos, this.storagePos, { x: this.gate.x + this.gate.w / 2, y: this.gate.y + this.gate.h / 2 }].filter(Boolean);
+    const lane = { x0: Math.floor(this.gate.x / T) - 1, x1: Math.floor((this.gate.x + this.gate.w) / T) + 1, y0: Math.floor(this.gate.y / T) - 1, y1: Math.floor(this.spawn.y / T) + 1 }; // the walk from spawn to the gate stays open
     const free = (cx, cy) => map.inBounds(cx, cy) && !map.blocking(cx, cy) && !map.dyn[map.idx(cx, cy)]
+      && !(cx >= lane.x0 && cx <= lane.x1 && cy >= lane.y0 && cy <= lane.y1)
       && keepClear.every((k) => Math.hypot(cx * T + 16 - k.x, cy * T + 16 - k.y) > 40);
     const blockFree = (x0, y0) => {
       for (let y = y0; y < y0 + H; y++) for (let x = x0; x < x0 + rowLen; x++) if (!free(x, y)) return false;
@@ -174,11 +194,9 @@ export class LobbyExt {
     if (close(this.merchant.x, this.merchant.y - 10, 34)) return { type: 'ext', label: 'Talk to the merchant (upgrades)', run: () => this.g.onMerchant && this.g.onMerchant() };
     if (close(this.storagePos.x, this.storagePos.y - 8, 34)) return { type: 'ext', label: 'Storage locker (stash weapons between runs)', run: () => this.g.onStorage && this.g.onStorage() };
     if (close(this.boardPos.x, this.boardPos.y - 8, 34)) return { type: 'ext', label: 'Mission board (next round, vote, ready)', run: () => this.g.onBoard && this.g.onBoard() };
-    for (const d of this.deployDoors) {
-      if (close(d.x + 16, d.y + 16, 40)) {
-        const live = this.g.session && this.g.session.matchRunning();
-        return { type: 'ext', label: live ? 'DEPLOY into the running match' : 'Deploy door (no match running)', run: () => live && this.g.onDeploy && this.g.onDeploy() };
-      }
+    if (this.inGate()) {
+      const live = this.g.session && this.g.session.matchRunning();
+      return { type: 'ext', label: live ? 'DEPLOY into the running match' : 'Deploy gate — no round running yet', run: () => live && this.g.onDeploy && this.g.onDeploy() };
     }
     let best = null, bd = 30;
     for (const c of this.stations || []) {
@@ -222,8 +240,20 @@ export class LobbyExt {
     play.pickup();
   }
 
+  inGate() {
+    const pl = this.g.player, z = this.gate;
+    return !!z && pl.x > z.x && pl.x < z.x + z.w && pl.y > z.y + 8 && pl.y < z.y + z.h + 20;
+  }
+
   // ---------- frame ----------
-  update() {}
+  // Walking into the gate while a round is live deploys you (no button needed, so pad and touch play the same).
+  update(dt) {
+    const g = this.g, S = g.session;
+    this.gateCd = Math.max(0, (this.gateCd || 0) - dt);
+    if (!S || S.view !== 'lobby' || g.noInput || g.paused || !g.player.alive || !this.inGate() || !S.matchRunning()) { this.gateT = 0; return; }
+    this.gateT = (this.gateT || 0) + dt;
+    if (this.gateT > 0.4 && this.gateCd <= 0) { this.gateT = 0; this.gateCd = 3; g.onDeploy && g.onDeploy(); }
+  }
 
   drawables(list, ctx) {
     const g = this.g;
@@ -270,12 +300,47 @@ export class LobbyExt {
       });
       ctx.textAlign = 'left';
     }
-    const live = g.session && g.session.matchRunning();
-    for (const d of this.deployDoors) {
-      ctx.strokeStyle = live ? `rgba(125,255,138,${0.5 + 0.4 * Math.sin(g.time * 4)})` : 'rgba(150,150,150,0.4)';
-      ctx.lineWidth = 2; ctx.strokeRect(d.x - 2, d.y - 2, 36, 36);
-      ctx.font = '7px Bebas, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = live ? '#7dff8a' : '#999';
-      ctx.fillText(live ? 'DEPLOY' : 'EXIT', d.x + 16, d.y - 5); ctx.textAlign = 'left';
+    this.drawGate(ctx);
+  }
+
+  drawGate(ctx) {
+    const g = this.g, pl = g.player, z = this.gate, S = g.session, map = g.map;
+    const live = !!(S && S.matchRunning()), t = g.time;
+    const col = live ? '125,255,138' : '200,200,200', pulse = live ? 0.5 + 0.5 * Math.sin(t * 4) : 0.35;
+    // chevrons flowing from the spawn up both sides of the hall to the pad
+    const lanes = [Math.floor((z.x + T) / T), Math.floor((z.x + z.w - T) / T)];
+    ctx.fillStyle = `rgba(${col},${live ? 0.55 : 0.22})`;
+    for (const cx of lanes) {
+      for (let y = this.spawn.y - 20; y > z.y + z.h; y -= T) {
+        const yy = y - ((t * 40) % T), x = cx * T + 16;
+        if (yy < z.y + z.h + 6 || map.blocking(cx, Math.floor(yy / T))) continue;
+        ctx.beginPath(); ctx.moveTo(x, yy - 8); ctx.lineTo(x + 8, yy + 3); ctx.lineTo(x + 3, yy + 3); ctx.lineTo(x, yy - 2); ctx.lineTo(x - 3, yy + 3); ctx.lineTo(x - 8, yy + 3); ctx.closePath(); ctx.fill();
+      }
+    }
+    // the pad
+    ctx.fillStyle = `rgba(${col},${0.10 + 0.12 * pulse})`; ctx.fillRect(z.x, z.y, z.w, z.h);
+    ctx.strokeStyle = `rgba(${col},${0.5 + 0.4 * pulse})`; ctx.lineWidth = 2; ctx.strokeRect(z.x + 1, z.y + 1, z.w - 2, z.h - 2);
+    ctx.setLineDash([6, 6]); ctx.lineDashOffset = -t * 20; ctx.strokeRect(z.x + 6, z.y + 6, z.w - 12, z.h - 12); ctx.setLineDash([]);
+    ctx.textAlign = 'center';
+    ctx.font = '14px Bebas, Impact, sans-serif';
+    const info = S && S.lobbyInfo(), sub = live ? 'WALK IN TO JOIN THE ROUND' : info ? `NEXT ROUND ${info.clock}` : 'NO ROUND YET';
+    const head = live ? 'DEPLOY' : 'DEPLOY GATE';
+    ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(z.x + z.w / 2 - 66, z.y + 6, 132, 34);
+    ctx.fillStyle = live ? '#7dff8a' : '#bbb'; ctx.fillText(head + ' \u25B2', z.x + z.w / 2, z.y + 21);
+    ctx.font = '8px Bebas, Impact, sans-serif'; ctx.fillStyle = live ? '#d6ffd9' : '#9aa'; ctx.fillText(sub, z.x + z.w / 2, z.y + 34);
+    // signposts near the spawn
+    ctx.font = '9px Bebas, Impact, sans-serif';
+    const sign = (x, y, a, b) => { ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(x - 46, y - 11, 92, 22); ctx.fillStyle = live ? '#7dff8a' : '#ffd36b'; ctx.fillText(a, x, y); ctx.font = '7px Bebas, sans-serif'; ctx.fillStyle = '#cdd6e0'; ctx.fillText(b, x, y + 8); ctx.font = '9px Bebas, Impact, sans-serif'; };
+    sign(this.spawn.x, this.spawn.y - 100, '\u25B2 DEPLOY GATE \u25B2', live ? 'round is live - go north' : 'north, past the desks');
+    ctx.textAlign = 'left';
+    // a pointer orbiting you while you are far from the gate
+    const gx = z.x + z.w / 2, gy = z.y + z.h / 2, dx = gx - pl.x, dy = gy - (pl.y - 10), d = Math.hypot(dx, dy);
+    if (d > 130 && !g.ghost) {
+      const a = Math.atan2(dy, dx), r = 34 + 2 * Math.sin(t * 6), x = pl.x + Math.cos(a) * r, y = pl.y - 10 + Math.sin(a) * r;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(a);
+      ctx.fillStyle = live ? 'rgba(125,255,138,0.95)' : 'rgba(255,211,107,0.8)'; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(8, 0); ctx.lineTo(-4, -6); ctx.lineTo(-1, 0); ctx.lineTo(-4, 6); ctx.closePath(); ctx.stroke(); ctx.fill();
+      ctx.restore();
     }
   }
 
