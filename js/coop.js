@@ -23,6 +23,8 @@ class RemotePlayer extends Player {
   get airborne() { return (this.jh || 0) > 0.5; }
 }
 
+const HOST_SILENCE_MS = 9000;
+
 export class Coop {
   constructor(net, me) {
     this.net = net;
@@ -165,6 +167,16 @@ export class Coop {
     };
   }
 
+  // A sleeping tablet or dead wifi can leave the connection 'open' for 30 s or more. The host sends a snapshot
+  // several times a second, so ~9 s of silence means it is gone: treat it like a close (host-dropped prompt).
+  watchHost() {
+    const N = this.net, now = performance.now();
+    if (document.hidden || !N.heardAt) { N.heardAt = now; return; } // our own background tab is not the host's fault
+    if (this.hostSilent || now - N.heardAt < HOST_SILENCE_MS) return;
+    this.hostSilent = true;
+    N.onLost();
+  }
+
   // Called once per frame by the Session.
   update(dt) {
     const S = this.session;
@@ -180,6 +192,7 @@ export class Coop {
       if (this.client && this.infoWanted.size) this.net.toHost({ t: 'mi', ids: [...this.infoWanted].slice(0, 40) });
       if (this.client && this.npcInfoWanted.size) this.net.toHost({ t: 'ni', ids: [...this.npcInfoWanted] });
     }
+    if (this.client) this.watchHost();
     for (const g of this.games()) this.updateAvatars(g, dt);
     if (S.match && this.client) this.updateMirror(S.match, dt);
   }

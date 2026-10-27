@@ -889,7 +889,13 @@ function frame(t) {
 }
 
 function frameBody(t) {
-  if (session && session.view === 'match' && !screen && !document.hidden) perfTick(Math.max(0, (t - last) / 1000 || 0)); else perfReset();
+  const w0 = performance.now();
+  const timed = !!(session && session.view === 'match' && !screen && !document.hidden);
+  const gap = Math.max(0, (t - last) / 1000 || 0);
+  try { frameInner(t); } finally { if (timed) perfTick(gap, performance.now() - w0); else perfReset(); }
+}
+
+function frameInner(t) {
   const dt = Math.max(0, Math.min(0.05, (t - last) / 1000 || 0));
   last = t;
   input.poll();

@@ -99,11 +99,12 @@ export class Player {
     const lift = this.jumpH;
     const wd = weaponDraw && (() => { ctx.save(); ctx.translate(0, -lift); weaponDraw(); ctx.restore(); });
     if (behind && wd) wd();
-    if (this.hurtT > 0) ctx.filter = 'brightness(1.8) sepia(1) hue-rotate(-50deg) saturate(4)';
+    const tint = this.hurtT > 0;
+    if (tint) ctx.filter = 'brightness(1.8) sepia(1) hue-rotate(-50deg) saturate(4)';
     const h = this.jumpH;
     if (h) { ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(this.x, this.y - 1, 6 - h * 0.2, 2.5, 0, 0, 7); ctx.fill(); }
     drawLayers(ctx, atlas, this.look.layers, h ? ['run', 'walk'] : anims, dir, this.animT, this.x, this.y - h);
-    ctx.filter = 'none';
+    if (tint) ctx.filter = 'none';
     if (!behind && wd && this.alive) wd();
   }
 }
@@ -170,7 +171,7 @@ export class Mob {
     return true;
   }
 
-  draw(ctx, atlas) {
+  draw(ctx, atlas, lite = false) {
     atlas = this.atlas || atlas;
     let anims;
     if (!this.alive) anims = ['death', 'walk'];
@@ -185,9 +186,10 @@ export class Mob {
       ctx.scale(scale, scale);
       ctx.translate(-this.x, -this.y);
     }
-    if (this.flash > 0) ctx.filter = 'brightness(3)';
-    drawLayers(ctx, atlas, this.layers, anims, this.dir, this.alive ? this.animT : this.deadT * 1000, this.x, this.y, this.alive);
-    ctx.filter = 'none';
+    const lit = this.flash > 0 && !lite;
+    if (lit) ctx.filter = 'brightness(3)';
+    drawLayers(ctx, atlas, lite && this.layers.length > 3 && !this.boss ? this.layers.slice(0, 3) : this.layers, anims, this.dir, this.alive ? this.animT : this.deadT * 1000, this.x, this.y, this.alive);
+    if (lit) ctx.filter = 'none';
     if (scale !== 1) ctx.restore();
     ctx.globalAlpha = 1;
   }
