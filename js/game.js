@@ -1621,7 +1621,9 @@ export class Game {
 
   renderLighting(ctx, zoom, camX, camY) {
     const cv = this.canvas, L = this.light;
-    if (L.width !== cv.width || L.height !== cv.height) { L.width = cv.width; L.height = cv.height; }
+    // the light layer is soft, so it is drawn small and stretched: about a sixth of the pixels, a eleventh in PERF MODE
+    const q = perf.lite ? 0.3 : 0.4, lw = Math.max(1, Math.round(cv.width * q)), lh = Math.max(1, Math.round(cv.height * q));
+    if (L.width !== lw || L.height !== lh) { L.width = lw; L.height = lh; }
     const lc = L.getContext('2d');
     lc.globalCompositeOperation = 'source-over';
     lc.setTransform(1, 0, 0, 1, 0, 0);
@@ -1629,15 +1631,20 @@ export class Game {
     lc.fillStyle = `rgba(4,6,14,${this.opts.lobby ? 0.3 : AMBIENT_DARK * (this.ambientScale ?? 1)})`;
     lc.fillRect(0, 0, L.width, L.height);
     lc.globalCompositeOperation = 'destination-out';
-    lc.setTransform(zoom, 0, 0, zoom, -camX * zoom, -camY * zoom);
+    lc.setTransform(zoom * q, 0, 0, zoom * q, -camX * zoom * q, -camY * zoom * q);
     const pats = this.assets.tables.lightpats;
+    // one cached soft-disc sprite scaled and faded per light (a draw call) instead of building a gradient per light per frame
+    if (!Game.holeSprite) {
+      const c = document.createElement('canvas'); c.width = c.height = 128;
+      const x = c.getContext('2d'), g = x.createRadialGradient(64, 64, 0, 64, 64, 64);
+      g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(0.55, 'rgba(0,0,0,0.55)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      x.fillStyle = g; x.fillRect(0, 0, 128, 128);
+      Game.holeSprite = c;
+    }
     const hole = (x, y, r, a) => {
-      const g = lc.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, `rgba(0,0,0,${a})`);
-      g.addColorStop(0.55, `rgba(0,0,0,${a * 0.55})`);
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      lc.fillStyle = g;
-      lc.beginPath(); lc.arc(x, y, r, 0, 7); lc.fill();
+      lc.globalAlpha = Math.max(0, Math.min(1, a));
+      lc.drawImage(Game.holeSprite, x - r, y - r, r * 2, r * 2);
+      lc.globalAlpha = 1;
     };
     const vw = this.cam.vw, vh = this.cam.vh;
     for (const l of this.map.lights) {
@@ -1667,7 +1674,9 @@ export class Game {
     if (this.ext) this.ext.lights(hole);
     for (const p of this.projectiles.list) if (p.flame || p.explode) hole(p.x, p.y, 40, 0.5);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(L, 0, 0);
+    ctx.imageSmoothingEnabled = !perf.lite; // the filtered stretch is the costly part on weak GPUs; the glow is soft enough to go without
+    ctx.drawImage(L, 0, 0, cv.width, cv.height);
+    ctx.imageSmoothingEnabled = false;
     if (pl.hurtT > 0 || pl.hp < pl.maxHp * 0.25) {
       const a = pl.hurtT > 0 ? 0.35 : 0.12 + 0.08 * Math.sin(this.time * 6);
       const g = ctx.createRadialGradient(cv.width / 2, cv.height / 2, cv.height * 0.3, cv.width / 2, cv.height / 2, cv.height * 0.8);
