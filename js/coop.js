@@ -16,6 +16,7 @@ const STATES = ['walk', 'attack', 'rush'];
 export const DOWN_TIME = 25;
 const REVIVE_TIME = 2.5;
 const SEND_HZ = 15;
+const INTEREST = 820; // px around a client that the host streams zeds for (a bit more than the view)
 
 class RemotePlayer extends Player {
   get jumpH() { return this.jh || 0; }
@@ -30,6 +31,9 @@ export class Coop {
     this.players = new Map();  // other players' latest state, by id
     this.session = null;
     this.sendT = 0;
+    this.pingT = 0;
+    this.pingMs = null;        // client: round trip to the host
+    this.lastRun = null;       // client: the host's last director state, to resume the run if the host drops
     this.infoWanted = new Set();
     this.npcInfoWanted = new Set();
     this.mobInfo = new Map();  // client cache: nid -> info
@@ -48,6 +52,8 @@ export class Coop {
     const N = this.net;
     N.on('st', (m, from) => { if (this.host) { m.id = from; this.players.set(from, m); } });
     N.on('w', (m) => this.onWorld(m));
+    N.on('pg', (m, from) => { if (this.host) N.send(from, { t: 'pn', c: m.c }); });
+    N.on('pn', (m) => { const ms = Math.round(performance.now() - m.c); this.pingMs = this.pingMs == null ? ms : Math.round(this.pingMs * 0.6 + ms * 0.4); });
     N.on('hello', (m, from) => {
       if (!this.host) return;
       this.players.set(from, { id: from, n: m.n, l: m.l, c: m.c, v: 'lobby', x: -9999, y: -9999 });
@@ -168,7 +174,9 @@ export class Coop {
       this.sendT = 1 / SEND_HZ;
       const st = this.myState();
       if (this.client) this.net.toHost(st);
-      else this.net.broadcast(this.worldSnapshot(st));
+      else for (const id of this.net.conns.keys()) this.net.send(id, this.worldSnapshot(st, id));
+      this.pingT -= 1 / SEND_HZ;
+      if (this.client && this.pingT <= 0) { this.pingT = 2; this.net.toHost({ t: 'pg', c: performance.now() }); }
       if (this.client && this.infoWanted.size) this.net.toHost({ t: 'mi', ids: [...this.infoWanted].slice(0, 40) });
       if (this.client && this.npcInfoWanted.size) this.net.toHost({ t: 'ni', ids: [...this.npcInfoWanted] });
     }
@@ -177,12 +185,18 @@ export class Coop {
   }
 
   // ---------- host: world snapshot ----------
-  worldSnapshot(myState) {
+  // Per client: only zeds near that player (plus bosses) are sent, so a 200-zed horde doesn't flood
+  // a phone on mobile data. Zeds that leave the window simply expire client-side (see updateMirror).
+  worldSnapshot(myState, to = null) {
     const S = this.session, g = S.match;
     const msg = { t: 'w', p: [myState, ...this.players.values()], r: S.round };
     if (g && S.state === 'running') {
       msg.z = g.z;
-      msg.m = g.mobs.map((m) => [m.nid, Math.round(m.x), Math.round(m.y), DIRS.indexOf(m.dir), Math.max(0, STATES.indexOf(m.state)), Math.max(0, Math.round(m.hp)), m.alive ? 1 : 0]);
+      const who = to && this.players.get(to);
+      let mobs = g.mobs;
+      if (who && who.v === 'match') mobs = mobs.filter((m) => m.boss || Math.hypot(m.x - who.x, m.y - who.y) < INTEREST);
+      else if (who && who.v !== 'spec') mobs = []; // spectators still see the whole map
+      msg.m = mobs.map((m) => [m.nid, Math.round(m.x), Math.round(m.y), DIRS.indexOf(m.dir), Math.max(0, STATES.indexOf(m.state)), Math.max(0, Math.round(m.hp)), m.alive ? 1 : 0]);
       msg.n = g.npcs.filter((n) => !n.dead).map((n) => { if (!n.nid) n.nid = ++g.nidSeq; return [n.nid, Math.round(n.x), Math.round(n.y), DIRS.indexOf(n.dir), n.alive ? 1 : 0, n.moving ? 1 : 0, Math.round(n.aim * 100) / 100, n.flashT > 0 ? 1 : 0]; });
     }
     return msg;

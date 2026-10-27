@@ -10,6 +10,7 @@ import { campaignLine } from './siege.js';
 import { LOOKS } from './actors.js';
 import { unlockAudio, sfx, initAudio, music, setMuted, applyVolumes, play, suspendAudio } from './sfx.js';
 import { Net } from './net.js';
+import { perfTick, perfReset } from './perf.js';
 import { Coop } from './coop.js';
 import { Input, ACTIONS, TOUCH_LABELS, DEFAULT_PAD, DEFAULT_PAD_HOLD, loadSettings, saveSettings, resetSettings, keyLabel } from './input.js';
 
@@ -127,7 +128,10 @@ function showToast(msg) {
   showToast.t = setTimeout(() => (toast.className = ''), 2600);
 }
 input.onDevice = (kind, what) => {
-  if (kind === 'connected') { showToast(what + ' connected'); if (session) session.active.msg(what + ' connected', '#9cd4ff'); }
+  if (kind === 'connected') {
+    showToast(what + ' connected'); if (session) session.active.msg(what + ' connected', '#9cd4ff');
+    if (!session && !settings.padChecked && screen && screen.name === 'menu') showPadCheck(); // first controller ever: check which buttons the browser lets through
+  }
   if (kind === 'disconnected') { showToast(what + ' disconnected'); pauseForFocus(); }
   if (kind === 'switch') { const h = overlay.querySelector('.help'); if (h) h.textContent = controlsHelp(); }
   document.body.classList.toggle('touch', input.touchUI && input.lastDevice === 'touch');
@@ -342,6 +346,32 @@ function showCoop(status = '') {
   code.addEventListener('keydown', (e) => { if (e.key === 'Enter') go('join'); });
 }
 
+// The host's connection dropped mid-run: offer to carry the run on from here under a new room code.
+function showHostLost(run) {
+  const at = `${Math.floor(run.tm / 60)}:${String(run.tm % 60).padStart(2, '0')}`;
+  open('hostlost', () => leaveSession(), el('div', { class: 'panel' },
+    el('h2', {}, 'THE HOST DROPPED'),
+    el('p', { class: 'sub' }, `Your run was at ${at} with ${run.h} horde${run.h === 1 ? '' : 's'} survived. Host from here and the next round picks up that clock and threat. You get a new room code to share with the others.`),
+    el('button', { class: 'go', 'data-focus': true, onclick: () => resumeAsHost(run) }, 'RESUME AS HOST'),
+    el('button', { class: 'pick small', onclick: () => leaveSession() }, el('b', {}, 'Leave'))));
+}
+async function resumeAsHost(run) {
+  leaveSession(false);
+  closePanel();
+  const net = new Net();
+  try {
+    await net.host();
+    await enterLobby(new Coop(net, { name: profile.prefs.name, look: choice.look, cls: choice.cls }));
+    if (!session) throw new Error('could not open the base');
+    session.resume(run);
+    showToast(`New room ${net.code} — share it so the others can rejoin`);
+  } catch (err) {
+    net.close();
+    showToast('Could not take over: ' + (err && err.message || err));
+    showMenu();
+  }
+}
+
 function leaveSession(toMenu = true) {
   if (session && session.match && session.match.ext) session.match.ext.stop();
   if (session && session.coop) session.coop.close();
@@ -359,7 +389,11 @@ async function enterLobby(coop = null) {
     loading.textContent = 'Loading the base…';
     loading.style.display = 'grid';
     session = new Session({ canvas, assets, data, input, profile, cls: choice.cls, look: LOOKS[choice.look], coop, ui: { merchant: showMerchant, board: showBoard, results: showResults, storage: showStorage, armory: showArmory } });
-    if (coop) coop.net.onLost = () => { showToast('Lost the connection to the host'); leaveSession(); };
+    if (coop) coop.net.onLost = () => {
+      const run = coop.lastRun;
+      if (run && session && session.match && run.r === session.round) showHostLost(run);
+      else { showToast('Lost the connection to the host'); leaveSession(); }
+    };
     await withTimeout(session.init(), 20000);
     if (!session.lobby || !session.lobby.map) throw new Error('the base did not finish loading');
     loading.style.display = 'none';
@@ -459,6 +493,7 @@ function showResults(s) {
       p.win ? el('tr', {}, el('td', {}, 'Objective bonus'), el('td', {}, String(p.win))) : null,
       el('tr', {}, el('td', {}, `Difficulty ×${p.mult}`), el('td', {}, '')),
       el('tr', { class: 'total' }, el('td', {}, 'Coins earned'), el('td', {}, '+' + p.total))),
+    p.siegeScrap ? el('p', { class: 'sub' }, `+${p.siegeScrap} scrap sent to your Siege bases.`) : null,
     recordLine(s.record),
     s.coop ? el('p', { class: 'sub' }, 'Your teammates are still fighting — spectate them from the mission board.') : null,
     el('p', {}, `Bank: ${profile.coins} coins — spend them at the merchant and the tables.`),
@@ -711,6 +746,7 @@ function showSettings(back) {
     body = el('div', {},
       el('p', { class: 'sub left' }, status),
       el('p', { class: 'sub left padtest' }, 'Button test: press any button…'),
+      el('div', { class: 'row' }, el('button', { class: 'pick small', onclick: showPadCheck }, el('b', {}, 'Controller check')), settings.padMissing && settings.padMissing.length ? el('small', {}, 'Last check missed: ' + settings.padMissing.join(', ')) : null),
       el('div', { class: 'row' }, el('small', {}, 'Button names: '), style('auto', 'Auto'), style('ps', 'PlayStation'), style('xbox', 'Xbox')),
       el('p', { class: 'sub left' }, 'Left stick moves, right stick aims (sticks are fixed). In legacy mode the fire button auto-targets the closest zed. In menus: D-pad / left stick to move, ✕ / A to select, ○ / B to go back.'),
       el('p', { class: 'sub left' }, 'Tablets & phones: the default layout never needs Create/Share, the PS / Xbox button or the touchpad — browsers like Amazon Silk use those for their own menus. Tap Options / Menu to pause, hold it for your bag. If ○ / B makes the browser go back, the game catches it and opens the pause menu instead.'),
@@ -785,6 +821,41 @@ function menuNav(dt) {
   if (tap(1) && screen && screen.back) { input.capture = null; play.ui('menuBack'); screen.back(); }
 }
 
+// ---------- controller check ----------
+// Browsers like Amazon Silk swallow some buttons (Create, PS, touchpad, sometimes ○ as Back). This walks
+// through every button the default layout uses, so the player sees at once which ones never arrive.
+const CHECK_BTNS = [[0, 'select / use'], [1, 'back / jump'], [2, 'reload'], [3, 'throwable / heal'], [4, 'throw'], [5, 'next weapon'], [6, 'last weapon'], [7, 'fire'],
+  [9, 'pause'], [11, 'frenzy'], [12, 'D-pad up'], [13, 'D-pad down'], [14, 'D-pad left'], [15, 'D-pad right']];
+function showPadCheck() {
+  const seen = new Set();
+  const list = el('div', { class: 'padchk' });
+  const done = el('button', { class: 'pick small', onclick: () => finishPadCheck(seen) }, el('b', {}, 'Finish'));
+  const render = () => {
+    list.innerHTML = '';
+    for (const [i, what] of CHECK_BTNS) list.append(el('span', { class: 'sub', style: `display:inline-block;min-width:200px;margin:2px 8px;color:${seen.has(i) ? '#7dff8a' : '#aaa'}` }, `${seen.has(i) ? '✓' : '○'} ${input.padButtonLabel(i)} — ${what}`));
+  };
+  render();
+  open('padcheck', () => finishPadCheck(seen), el('div', { class: 'panel' },
+    el('h2', {}, 'CONTROLLER CHECK'),
+    el('p', { class: 'sub' }, input.pad ? `${input.padName || 'Controller'} detected. Press each button once; any that never turn green are being eaten by the browser, so rebind them in Settings → Controller.` : 'No controller detected yet — press any button on it.'),
+    list, el('div', { class: 'row' }, done)));
+  screen.noNav = true; screen.seen = seen; screen.render = render;
+}
+function padCheckTick() {
+  if (!screen || screen.name !== 'padcheck') return;
+  let changed = false;
+  for (const i of input.padTapped) if (CHECK_BTNS.some(([b]) => b === i) && !screen.seen.has(i)) { screen.seen.add(i); changed = true; }
+  if (changed) screen.render();
+  if (screen.seen.size === CHECK_BTNS.length) finishPadCheck(screen.seen);
+}
+function finishPadCheck(seen) {
+  const missing = CHECK_BTNS.filter(([i]) => !seen.has(i)).map(([i, w]) => `${input.padButtonLabel(i)} (${w})`);
+  settings.padChecked = true; settings.padMissing = missing;
+  saveSettings(settings);
+  closePanel();
+  showToast(missing.length ? `Never arrived: ${missing.join(', ')} — rebind in Settings → Controller` : 'Controller check passed: every button works');
+}
+
 // Live readout for the controller settings tab.
 function padTester() {
   const p = overlay.querySelector('.padtest');
@@ -818,6 +889,7 @@ function frame(t) {
 }
 
 function frameBody(t) {
+  if (session && session.view === 'match' && !screen && !document.hidden) perfTick(Math.max(0, (t - last) / 1000 || 0)); else perfReset();
   const dt = Math.max(0, Math.min(0.05, (t - last) / 1000 || 0));
   last = t;
   input.poll();
@@ -826,8 +898,9 @@ function frameBody(t) {
   if (input.capture && input.capture.kind === 'pad' && input.padTapped.size) {
     input.capture.done([...input.padTapped][0]);
   } else if (screen) {
-    menuNav(dt);
+    if (!screen.noNav) menuNav(dt);
     if (screen && screen.name === 'settings') padTester();
+    if (screen && screen.name === 'padcheck') padCheckTick();
     if (screen && !input.capture && session && ((screen.name === 'inventory' && input.pressed('inventory'))
       || (['inventory', 'merchant', 'board', 'pause', 'results'].includes(screen.name) && input.pressed('pause') && !input.padTapped.has(1)))) closePanel();
   } else if (session && session.view === 'spectate') {
@@ -883,6 +956,11 @@ function drawSpectateBar() {
     window.__tlcr = { frame: (t) => frameBody(t), assets, data, input, settings, profile, get session() { return session; }, get game() { return session ? session.active : null; } };
     loading.style.display = 'none';
     showMenu();
+    // Fire tablets: Silk runs the game with browser chrome and swallows more buttons until it's installed
+    if (/Silk/.test(navigator.userAgent) && !standalone() && !profile.prefs.tipSilk) {
+      profile.prefs = { ...profile.prefs, tipSilk: 1 }; profile.save();
+      setTimeout(() => showToast('Tip: Silk menu → Add to Home screen, then launch from there for fullscreen'), 1500);
+    }
     requestAnimationFrame(frame);
   } catch (err) {
     loading.textContent = 'Failed to load: ' + err.message + ' (serve this folder over http, see README)';

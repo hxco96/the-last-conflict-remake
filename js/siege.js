@@ -32,6 +32,13 @@ function readAll() { try { return JSON.parse(localStorage.getItem(STORE) || '{}'
 export function loadCampaign(map) { const c = readAll()[map]; return c ? { ...fresh(), ...c, up: { ...fresh().up, ...c.up } } : fresh(); }
 export function saveCampaign(map, c) { try { const all = readAll(); all[map] = c; localStorage.setItem(STORE, JSON.stringify(all)); } catch { /* storage unavailable */ } }
 export function resetCampaign(map) { try { const all = readAll(); delete all[map]; localStorage.setItem(STORE, JSON.stringify(all)); } catch { /* storage unavailable */ } }
+// Survival runs pay Siege scrap: every saved campaign gets it, so a long run elsewhere strengthens your base.
+export function grantScrap(n) {
+  const all = readAll(), maps = Object.keys(all);
+  for (const k of maps) all[k].scrap = (all[k].scrap || 0) + n;
+  try { if (maps.length) localStorage.setItem(STORE, JSON.stringify(all)); } catch { /* storage unavailable */ }
+  return maps.length;
+}
 // one-liner for the mission board
 export function campaignLine(map) {
   const c = readAll()[map];
@@ -505,6 +512,8 @@ export class Siege {
     for (const d of survivors) if (d.v.kind === 'survivor') scraps += 6;
     c.scrap += scraps;
     c.kills += g.kills - this.nightKills0;
+    const st = g.profile && g.profile.stats; // nights held count on the same records as survival runs
+    if (st) { st.siegeNights = (st.siegeNights || 0) + 1; st.siegeBest = Math.max(st.siegeBest || 0, c.night); g.profile.coins += 10 * c.night; g.profile.save(); }
     for (const d of this.defenders) if (d.n.alive) d.v.nights++;
     // some drift on, the rest stay
     const leave = Math.max(0.1, 0.35 - 0.05 * c.up.barracks);
@@ -528,7 +537,7 @@ export class Siege {
     c.boards = g.items.get('Boards') || 0;
     this.save();
     this.say(`NIGHT ${c.night - 1} SURVIVED`, '#7dff8a', `+${scraps} scrap · supplies dropped · night ${c.night} will be worse`);
-    g.msg(`Dawn. +${scraps} scrap. The horde will return stronger.`, '#7dff8a');
+    g.msg(`Dawn. +${scraps} scrap, +${10 * c.night} coins. The horde will return stronger.`, '#7dff8a');
     play.radio();
   }
 
