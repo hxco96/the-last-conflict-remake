@@ -3,7 +3,7 @@
 
 export const ACTIONS = [
   ['up', 'Move up'], ['down', 'Move down'], ['left', 'Move left'], ['right', 'Move right'],
-  ['run', 'Run'], ['jump', 'Jump'], ['context', 'Use or jump (contextual)'], ['mine', 'Place mine'], ['fire', 'Attack / fire'], ['autofire', 'Legacy auto-fire'], ['grenade', 'Throw grenade'],
+  ['run', 'Run'], ['drop', 'Drop weapon'], ['jump', 'Jump'], ['context', 'Use or jump (contextual)'], ['mine', 'Place mine'], ['fire', 'Attack / fire'], ['autofire', 'Legacy auto-fire'], ['grenade', 'Throw grenade'],
   ['reload', 'Reload'], ['interact', 'Use / pick up'], ['heal', 'Quick heal'], ['frenzy', 'Frenzy'],
   ['slot1', 'Weapon slot 1'], ['slot2', 'Weapon slot 2'], ['slot3', 'Weapon slot 3'], ['slot4', 'Weapon slot 4'], ['slot5', 'Weapon slot 5'], ['toggleThrowable', 'Toggle throwable'],
   ['nextWeapon', 'Next weapon'], ['prevWeapon', 'Previous weapon'], ['lastWeapon', 'Last weapon'],
@@ -14,7 +14,7 @@ export const DEFAULT_KEYS = {
   up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
   run: ['ShiftLeft', 'ShiftRight'], jump: ['Space'], mine: ['KeyN'], fire: ['Mouse0'], autofire: ['KeyF'], grenade: ['Mouse2', 'KeyG'],
   reload: ['KeyR'], interact: ['KeyE'], heal: ['KeyH'], frenzy: ['KeyV'],
-  slot1: ['Digit1'], slot2: ['Digit2'], slot3: ['Digit3'], slot4: ['Digit4'], slot5: ['Digit5'], toggleThrowable: ['KeyT'],
+  slot1: ['Digit1'], slot2: ['Digit2'], slot3: ['Digit3'], slot4: ['Digit4'], slot5: ['Digit5'], toggleThrowable: ['KeyT'], drop: ['KeyX'],
   nextWeapon: ['WheelDown'], prevWeapon: ['WheelUp'], lastWeapon: ['KeyQ'],
   flashlight: ['KeyL'], inventory: ['Tab', 'KeyI'], shop: ['KeyB'], pause: ['Escape', 'KeyP'], mute: ['KeyM'],
 };
@@ -24,7 +24,7 @@ export const DEFAULT_KEYS = {
 // D-pad = weapon slots, shoulders = throw / swap. Standard mapping indices.
 // Defaults only use the 16 core buttons: Create/Share (8), PS/Guide (16) and the touchpad (17)
 // open system or browser menus on tablets (Fire OS Silk, Android), so nothing needs them.
-export const PAD_VERSION = 4;
+export const PAD_VERSION = 5;
 export const TOUCHPAD = 17; // PS4 / PS5 touchpad click: the inventory button, fixed (not rebindable)
 export const DEFAULT_PAD = {
   up: [], down: [], left: [], right: [],
@@ -35,7 +35,7 @@ export const DEFAULT_PAD = {
   flashlight: [], inventory: [TOUCHPAD], shop: [], pause: [9], mute: [],
 };
 // Hold a button ~0.4 s for these (tap keeps the button's normal action).
-export const DEFAULT_PAD_HOLD = { heal: [3], mine: [2] };
+export const DEFAULT_PAD_HOLD = { heal: [3], mine: [2], drop: [1] };
 
 const PS_NAMES = ['✕ Cross', '○ Circle', '□ Square', '△ Triangle', 'L1', 'R1', 'L2', 'R2', 'Create', 'Options', 'L3', 'R3',
   'D-pad ↑', 'D-pad ↓', 'D-pad ←', 'D-pad →', 'PS', 'Touchpad'];
@@ -96,7 +96,7 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const TOUCH_LABELS = { reload: 'R', grenade: 'NADE', interact: 'USE', heal: 'HEAL', nextWeapon: 'SWAP', prevWeapon: 'PREV',
-  lastWeapon: 'LAST', flashlight: 'LIGHT', frenzy: 'FRENZY', run: 'RUN', inventory: 'BAG', shop: 'SHOP', autofire: 'AUTO', jump: 'JUMP', mine: 'MINE' };
+  lastWeapon: 'LAST', flashlight: 'LIGHT', frenzy: 'FRENZY', run: 'RUN', inventory: 'BAG', shop: 'SHOP', autofire: 'AUTO', drop: 'DROP', jump: 'JUMP', mine: 'MINE' };
 
 const STORE = 'tlcr-settings-v1';
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -325,7 +325,7 @@ export class Input {
     const mb = { x: W - m - 22 * u, y: m + 22 * u + (extra.topOffset || 0) };
     add('menu', this.touch.menuOpen ? '×' : '≡', mb.x, mb.y, 22 * u);
     if (this.touch.menuOpen) {
-      const items = [['pause', 'PAUSE'], ['inventory', 'BAG'], ['toggleThrowable', 'NEXT NADE'], ['mine', 'MINE'], ['flashlight', 'LIGHT']];
+      const items = [['pause', 'PAUSE'], ['inventory', 'BAG'], ['toggleThrowable', 'NEXT NADE'], ['mine', 'MINE'], ['drop', 'DROP'], ['flashlight', 'LIGHT']];
       if (extra.inLobby) items.splice(2, 2);
       items.forEach(([id, label], i) => add(id, label, mb.x, mb.y + (i + 1) * 54 * u, 24 * u, { menuItem: true }));
     }

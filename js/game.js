@@ -831,6 +831,31 @@ export class Game {
     if (this.slots[si].isGun && !this.opts.lobby) this.ammo.topUp(it['ammo-kind'], it['max-mag']);
   }
 
+  // Drop a weapon: onto the floor in a match (anyone can pick it up with Use), into the storage
+  // locker in the lobby. You always keep at least one weapon.
+  dropWeapon(idx = this.cur) {
+    const s = this.slots[idx];
+    if (!s) return false;
+    if (this.slots.filter(Boolean).length <= 1) { this.msg('You need at least one weapon', '#ffb0b0'); return false; }
+    const P = this.profile, pl = this.player;
+    if (this.opts.lobby) {
+      if (!P || P.storage.length >= P.level('storageSlots')) { this.msg('Storage locker is full', '#ffb0b0'); return false; }
+      P.storage.push(s.item.name);
+      this.slots[idx] = null;
+      this.ext.syncInv();
+      this.msg(`${s.item.name} moved to your storage locker`, '#9cd4ff');
+    } else {
+      const a = pl.aim || 0;
+      this.slots[idx] = null;
+      this.pickups.push(this.makePickup(s.item.name, pl.x + Math.cos(a) * 16, pl.y - 6 + Math.sin(a) * 10, null, null, true));
+      this.msg(`Dropped ${s.item.name} (Use to pick it up again)`, '#ffd36b');
+    }
+    this.reload = null;
+    if (!this.slots[this.cur]) { this.cur = Math.max(0, this.slots.findIndex(Boolean)); }
+    play.pickup();
+    return true;
+  }
+
   ammoAmount(p) {
     const cap = this.data.ammoCap.get(p.item['sprite-id']) || 60;
     return Math.max(1, Math.round((p.amount ?? 0.5) <= 1 ? cap * (p.amount ?? 0.5) : p.amount));
@@ -1035,6 +1060,7 @@ export class Game {
     if (P('reload')) this.startReload();
     if (P('interact')) this.interact();
     if (P('grenade')) this.throwGrenade();
+    if (P('drop')) this.dropWeapon();
     if (P('toggleThrowable')) { const n = this.throwables.cycle(); this.msg(n ? `Throwable: ${n} ×${this.throwables.counts.get(n)}` : 'No throwables', '#ffd36b'); }
     if (P('heal')) this.quickHeal();
     if (P('flashlight')) { this.flashlight = !this.flashlight; play.flashlight(); }
@@ -1524,11 +1550,15 @@ export class Game {
 
   drawHeldWeapon(ctx) {
     const s = this.slots[this.cur];
-    if (!s || s.isThrowable) return;
-    this.drawWeapon(ctx, this.player, s.item, this.recoilT > 0, this.muzzle > 0 && s.isGun);
+    if (!s || s.isThrowable || this.opts.lobby) return;
+    // fire frame / flash only for a short window after a confirmed shot (recoilT is set on success)
+    const live = !this.reload && !this.paused && !this.over && this.recoilT > 0;
+    this.drawWeapon(ctx, this.player, s.item, live, live && this.muzzle > 0 && !!s.isGun);
   }
 
-  // Draws a held weapon for any human (player or NPC) using the combat_anims sprites.
+  // Draws a held weapon for any human (player or NPC). The east-facing combat_anims sprite is
+  // rotated around a hand pivot by the aim angle (mirrored vertically when aiming left), with the
+  // pivot lowered for south and raised for north. The matching arm/hand pose frame is drawn on top.
   drawWeapon(ctx, ent, item, recoil, flash) {
     const a = this.atlas.combat;
     const base = norm(item.name);
@@ -1538,26 +1568,41 @@ export class Game {
       found = null;
       for (const k of a.anims.keys()) {
         const [b, anim, dir] = k.split('|');
-        if (norm(b) === base && !/^sd/.test(anim) && dir === 'e') { found = a.anims.get(k); break; }
+        if (norm(b) === base && !/^sd/.test(anim) && dir === 'e') { found = a.anims.get(k); found.animName = anim; break; }
       }
       key.set(item.name, found);
     }
-    const faceLeft = Math.cos(ent.aim) < 0;
+    const ca = Math.cos(ent.aim), sa = Math.sin(ent.aim);
+    const south = sa > 0.7071, north = sa < -0.7071;
+    // pivot: where the hand sits relative to the feet for each facing
+    const px = ent.x + (south ? -3 : north ? 3 : 0), py = ent.y - (south ? 12 : north ? 17 : 15);
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(ent.aim);
+    if (ca < 0) ctx.scale(1, -1);
+    ctx.scale(1 - 0.45 * sa * sa, 1); // foreshorten the barrel when aiming toward/away from the camera
     if (!found) {
-      ctx.save();
-      ctx.translate(ent.x, ent.y - 11);
-      ctx.rotate(ent.aim);
-      if (faceLeft) ctx.scale(1, -1);
-      this.data.drawIcon(ctx, item.name, 2, -8, 16);
+      ctx.scale(1 / (1 - 0.45 * sa * sa), 1); ctx.translate(7, 0); ctx.rotate(Math.PI / 2); // upright icon art -> points along the aim
+      this.data.drawIcon(ctx, item.name, -7, -7, 14);
       ctx.restore();
       return;
     }
-    a.draw(ctx, recoil && found.length > 1 ? found[1].f : found[0].f, ent.x, ent.y, faceLeft);
-    if (flash) {
-      const mx = ent.x + Math.cos(ent.aim) * 16, my = ent.y - 11 + Math.sin(ent.aim) * 16;
-      ctx.fillStyle = 'rgba(255,230,140,0.9)';
-      ctx.beginPath(); ctx.arc(mx, my, 2.5, 0, 7); ctx.fill();
+    const fr = found[recoil && found.length > 1 ? 1 : 0].f;
+    const [fx, fy, fw, fh, ox, oy] = fr;
+    const dx = ox - 16, dy = oy - 17;
+    ctx.drawImage(a.image, fx, fy, fw, fh, dx, dy, fw, fh);
+    // arm/hand pose frame of the player's body layer (east), same transform, drawn over the grip
+    const core = this.atlas.core, bl = ent.look && ent.look.layers && ent.look.layers.find((l) => l.startsWith('body-'));
+    const arm = bl && core && core.find(bl, [found.animName], ['e']);
+    if (arm) {
+      const [ax, ay, aw, ah, aox, aoy] = arm.list[recoil && arm.list.length > 1 ? 1 : 0].f;
+      ctx.drawImage(core.image, ax, ay, aw, ah, aox - 16, aoy - 17, aw, ah);
     }
+    if (flash) {
+      ctx.fillStyle = 'rgba(255,230,140,0.9)';
+      ctx.beginPath(); ctx.ellipse(dx + fw + 1, dy + fh / 2, 2.5 / (1 - 0.45 * sa * sa), 2.5, 0, 0, 7); ctx.fill();
+    }
+    ctx.restore();
   }
 
   drawPickup(ctx, p) {

@@ -158,3 +158,7 @@ Co-op connects through the free public PeerJS matchmaker by default. For more re
 - Rounds auto-start and drop everyone in the room (including late joiners) — no queuing. The host can turn **Auto-start rounds** off on the mission board and press **Start match now** when ready.
 - **Change class / survivor** from the pause menu without leaving the room; settings are there too.
 - Closing a door on yourself now shoves you clear, and being wedged inside a solid tile frees you automatically.
+
+## Dropping weapons
+
+**X** (keyboard), hold **○** (controller), **DROP** in the touch ≡ menu, or the *Drop* button in the inventory screen. In a match the weapon falls on the floor (pick it up with Use); in the base it moves to your storage locker. You always keep at least one weapon.

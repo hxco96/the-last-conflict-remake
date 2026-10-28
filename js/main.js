@@ -690,6 +690,9 @@ function showChange() {
 
 function showInventory() {
   const game = session.active;
+  const gear = el('div', { class: 'grid' });
+  game.slots.forEach((s, i) => { if (s) gear.append(el('div', { class: 'cell' + (i === game.cur ? ' sel' : '') }, iconCanvas(s.item.name), el('b', {}, s.item.name),
+    el('button', { class: 'up', onclick: () => { game.dropWeapon(i); showInventory(); } }, game.opts.lobby ? 'Move to storage' : 'Drop'))); });
   const items = el('div', { class: 'grid' });
   for (const [name, n] of game.items) {
     if (n <= 0) continue;
@@ -713,7 +716,7 @@ function showInventory() {
   }
   if (!crafts.children.length) crafts.append(el('p', {}, 'Nothing to combine yet. Try Herb-G + Herb-R, or two gunpowders.'));
   open('inventory', closePanel, el('div', { class: 'panel wide' },
-    el('h2', {}, 'Inventory'), items, el('h3', {}, `Ammo slots (${game.ammo.slots.length}/${game.ammo.n})`), ammo,
+    el('h2', {}, 'Inventory'), el('h3', {}, 'Weapons'), gear, items, el('h3', {}, `Ammo slots (${game.ammo.slots.length}/${game.ammo.n})`), ammo,
     el('h3', {}, 'Throwables'), throws, el('h3', {}, 'Combine'), crafts,
     el('button', { class: 'go', 'data-focus': true, onclick: closePanel }, 'Close')));
 }
