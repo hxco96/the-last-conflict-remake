@@ -1,7 +1,7 @@
 // Offline support. The core game (~9 MB) is cached at install; maps and audio are cached the first
 // time they are played (or all at once via Settings → "Download everything for offline").
 // Bump VERSION whenever files change so installed copies update.
-const VERSION = 'tlcr-v21';
+const VERSION = 'tlcr-v22';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest',
   'js/main.js', 'js/assets.js', 'js/data.js', 'js/game.js', 'js/map.js', 'js/nav.js', 'js/actors.js',

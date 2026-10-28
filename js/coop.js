@@ -112,6 +112,20 @@ export class Coop {
       const av = g.avatars && g.avatars.get(m.id);
       if (av) { av.flashT = 0.06; av.recoilT = 0.08; }
     });
+    // a weapon dropped on the floor: everyone in the same match floor gets a copy, the first to take it removes the rest
+    N.on('dp', (m, from) => {
+      if (this.host) this.net.broadcast(m, from);
+      if (m.id === this.id) return;
+      const g = this.matchGame(); if (!g || g.z !== m.z || g.pickups.some((p) => p.sid === m.sid)) return;
+      const p = g.makePickup(m.w, m.x, m.y, null, null, true); p.sid = m.sid;
+      g.pickups.push(p);
+    });
+    N.on('dt', (m, from) => {
+      if (this.host) this.net.broadcast(m, from);
+      if (m.id === this.id) return;
+      const g = this.matchGame(); if (!g) return;
+      for (const p of g.pickups) if (p.sid === m.sid) p.dead = true;
+    });
     N.on('bm', (m, from) => {
       if (this.host) this.net.broadcast(m, from);
       if (m.id === this.id) return;
@@ -320,6 +334,18 @@ export class Coop {
   shot(g, item) {
     const pl = g.player;
     const msg = { t: 'sh', id: this.id, v: g.opts.lobby ? 'lobby' : 'match', z: g.z, w: item.name, x: Math.round(pl.x), y: Math.round(pl.y - 11) };
+    if (this.host) this.net.broadcast(msg); else this.net.toHost(msg);
+  }
+
+  dropped(g, p) {
+    if (g.opts.lobby) return;
+    p.sid = this.id + ':' + (this.dropSeq = (this.dropSeq || 0) + 1);
+    const msg = { t: 'dp', id: this.id, z: g.z, sid: p.sid, w: p.name, x: Math.round(p.x), y: Math.round(p.y) };
+    if (this.host) this.net.broadcast(msg); else this.net.toHost(msg);
+  }
+
+  taken(g, p) {
+    const msg = { t: 'dt', id: this.id, z: g.z, sid: p.sid };
     if (this.host) this.net.broadcast(msg); else this.net.toHost(msg);
   }
 

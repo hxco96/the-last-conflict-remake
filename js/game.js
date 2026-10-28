@@ -847,7 +847,9 @@ export class Game {
     } else {
       const a = pl.aim || 0;
       this.slots[idx] = null;
-      this.pickups.push(this.makePickup(s.item.name, pl.x + Math.cos(a) * 16, pl.y - 6 + Math.sin(a) * 10, null, null, true));
+      const dp = this.makePickup(s.item.name, pl.x + Math.cos(a) * 16, pl.y - 6 + Math.sin(a) * 10, null, null, true);
+      this.pickups.push(dp);
+      if (this.coop) this.coop.dropped(this, dp); // teammates see it and can take it
       this.msg(`Dropped ${s.item.name} (Use to pick it up again)`, '#ffd36b');
     }
     this.reload = null;
@@ -895,6 +897,7 @@ export class Game {
     }
     play.pickup();
     p.dead = true;
+    if (p.sid && this.coop) this.coop.taken(this, p);
     return true;
   }
 
