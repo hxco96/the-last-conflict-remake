@@ -53,7 +53,7 @@ export class GameData {
     balance(this.items, this.upgrades);
     this.mobs = new Map(t.mob_db.map((m) => [m.id, m]));
     this.outfits = new Map(t.outfits.map(([id, list]) => [id, list]));
-    this.perks = t.perkinfo_en;
+    this.perks = t.perkinfo_en.map((p) => (p.value === 'HeavyHits' ? { ...p, desc: 'Heal 4 hp per melee kill' } : p)).concat(CUSTOM_PERKS);
     this.recipes = t.crafting_recipes.map(([[out, n], parts]) => ({ out, n, parts }));
     // Drop tables (order as shipped): 0 ammo boxes, 1 on-kill, 2 guns, 3 melee.
     this.drops = t.drop_chances;
@@ -96,3 +96,26 @@ export class GameData {
     return null;
   }
 }
+
+// Perks added by this remake (the original table has no entry for them).
+const CUSTOM_PERKS = [
+  ['Deadeye', 'Sniper', 'Rifle rounds pierce one extra zed'],
+  ['LongShot', 'Sniper', 'Rifle damage rises up to 50% with distance'],
+  ['Focus', 'Sniper', 'Standing still builds up to +30% rifle crit chance'],
+  ['QuickBolt', 'Sniper', 'Rifles reload 30% faster'],
+  ['ColdBlood', 'Sniper', 'Gun kills with a rifle refund a round'],
+  ['Sprinter', 'Scout', 'Move 12% faster'],
+  ['Lungs', 'Scout', 'Running drains stamina 40% slower'],
+  ['Evasive', 'Scout', '15% chance to dodge a bite'],
+  ['Vaulter', 'Scout', 'Jumping costs no stamina'],
+  ['Adrenaline', 'Scout', 'Move 20% faster below 40% health'],
+  ['Overwatch', 'Gunner', 'SMG, AR and LMG damage +20%'],
+  ['AmmoSaver', 'Gunner', '30% chance a shot costs no ammo'],
+  ['Plated', 'Gunner', 'Take 15% less damage'],
+  ['FastMags', 'Gunner', 'Reload 30% faster'],
+  ['Overdrive', 'Gunner', 'Guns fire 25% faster in frenzy'],
+  ['Forager', 'Scavenger', 'Zeds drop loot 50% more often'],
+  ['Pockets', 'Scavenger', 'Ammo pickups give 25% more'],
+  ['Resourceful', 'Scavenger', '35% chance a healing item is not used up'],
+  ['Lucky', 'Scavenger', '+10% crit chance with guns'],
+].map(([value, cls, desc]) => ({ class: cls, value, name: value.replace(/([a-z])([A-Z])/g, '$1 $2'), 'sprite-id': 10151, desc, active: false }));

@@ -174,7 +174,7 @@ export function hitscan(g, o) {
       if (Math.abs(m.x - x) > m.radius + 2 || Math.abs(m.cy - y) > m.radius + 6) continue;
       hit.add(m);
       const fall = o.pellet ? 1 - 0.5 * Math.min(1, d / o.range) : d > o.range * 0.7 ? 1 - 0.4 * ((d - o.range * 0.7) / (o.range * 0.3)) : 1;
-      g.damageMob(m, o.dmg * fall, { vx: cos, vy: sin, ang: o.a, crit: o.crit, critMul: o.critMul, stun: o.stun });
+      g.damageMob(m, o.dmg * fall * (1 + (o.longshot || 0) * Math.min(1, d / o.range)), { vx: cos, vy: sin, ang: o.a, crit: o.crit, critMul: o.critMul, stun: o.stun });
       g.fx.spawn(o.pellet ? 'hitpoof' : 'blood-explode', x, y, { scale: o.pellet ? 0.45 : 0.35 });
       if (o.pierce >= 0 && hit.size > o.pierce) return;
     }
@@ -202,6 +202,7 @@ export function fireWeapon(g, slot, ax, ay) {
       let da = Math.atan2(dy, dx) - ang;
       da = Math.atan2(Math.sin(da), Math.cos(da));
       if (Math.abs(da) > 1.0 && d > 14) continue;
+      g.meleeHitAt = performance.now();
       g.damageMob(m, it.damage, { melee: true, ang, crit: perk.crit, stun: perk.stun, mul: perk.dmg, pierce: 0 });
       if (++hits > (it.pierce || 1)) break;
     }
@@ -229,6 +230,7 @@ export function fireWeapon(g, slot, ax, ay) {
   // guns
   if (slot.mag <= 0) { play.dry(); g.startReload(); return false; }
   slot.mag--;
+  if (g.hasPerk('AmmoSaver') && Math.random() < 0.3) slot.mag++;
   const pellets = Math.max(1, slot.stat('spread') || 1);
   const spreadRad = ((slot.stat('spread-angle') || 0) * Math.PI) / 180;
   const wobble = (pl.moving ? 0.07 : 0.025) * (pl.running ? 2 : 1);
@@ -247,7 +249,7 @@ export function fireWeapon(g, slot, ax, ay) {
     const speed = flame ? 260 : it.speed || 480;
     if (!explosive && !flame) {
       // hitscan: no visible projectile, just impacts where the round lands
-      hitscan(g, { x: ox, y: oy, a, range: it.range || 320, dmg, pierce: it.pierce ?? 0,
+      hitscan(g, { x: ox, y: oy, a, range: it.range || 320, dmg, longshot: perk.longshot, pierce: (it.pierce ?? 0) + perk.pierce,
         crit: perk.crit + (it['crit-chance'] || 0), critMul: it['crit-damage'] || 2, stun: perk.stun || it['stun-chance'] || 0, pellet: pellets > 1 });
       continue;
     }

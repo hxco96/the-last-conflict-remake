@@ -211,6 +211,9 @@ const CLASS_INFO = {
   Sniper: { tag: 'Long-range precision', stats: { Durability: 2, Firepower: 5, Mobility: 3, Support: 1 } },
   Demo: { tag: 'Explosives expert', stats: { Durability: 3, Firepower: 5, Mobility: 2, Support: 2 } },
   Medic: { tag: 'Keeps the squad alive', stats: { Durability: 3, Firepower: 3, Mobility: 4, Support: 5 } },
+  Scout: { tag: 'Fast skirmisher', stats: { Durability: 2, Firepower: 3, Mobility: 5, Support: 2 } },
+  Gunner: { tag: 'Sustained firepower', stats: { Durability: 4, Firepower: 5, Mobility: 2, Support: 1 } },
+  Scavenger: { tag: 'Finds more, wastes less', stats: { Durability: 3, Firepower: 3, Mobility: 3, Support: 4 } },
 };
 const previews = []; // animated canvases on the select screen
 
@@ -254,7 +257,7 @@ function showMenu() {
       el('div', { class: 'card-head' }, atlasIcon(c.icon, 44), el('div', {}, el('b', {}, name), el('small', {}, info.tag))),
       el('div', { class: 'stats' }, ...Object.entries(info.stats).map(([k, v]) => el('div', { class: 'stat' }, el('span', {}, k), el('i', { style: `--v:${v * 20}%` })))),
       el('div', { class: 'kit' }, ...kit.map((n) => { const w = el('span', { title: n }); w.append(iconCanvas(n, 28)); return w; })),
-      el('ul', { class: 'perks mini' }, ...perks.map((p) => el('li', {}, el('b', {}, (/^(BluntForce|Savagery|Headshot|Dazzle|BigBang|HealingPulse|VitalSigns|AfterShock|Heatwave|MoltenRage)$/.test(p.value) ? '⚡ ' : '') + p.name), ' ', el('small', {}, p.desc))))));
+      el('ul', { class: 'perks mini' }, ...perks.map((p) => el('li', {}, el('b', {}, (/^(BluntForce|Savagery|Headshot|Dazzle|BigBang|HealingPulse|VitalSigns|Overdrive|AfterShock|Heatwave|MoltenRage)$/.test(p.value) ? '⚡ ' : '') + p.name), ' ', el('small', {}, p.desc))))));
   }
   const look = LOOKS[choice.look];
   const survivor = el('div', { class: 'survivor' },
