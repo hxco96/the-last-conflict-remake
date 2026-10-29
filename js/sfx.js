@@ -298,7 +298,7 @@ export const play = {
       const heavy = item.class === 'shotgun' || item.class === 'rifle' || item.class === 'magnum';
       burst({ dur: heavy ? 0.25 : 0.12, freq: heavy ? 900 : 1800, vol: 0.4 });
     }
-    if (Math.random() < 0.5 && item.class !== 'thrower') sample(G.casing(), { vol: 0.25, x, y, delay: 0.25 });
+    if (Math.random() < 0.12 && item.class !== 'thrower') sample(G.casing(), { vol: 0.25, x, y, delay: 0.25 });
   },
   dry: () => sample(G.dry(), { vol: 0.6 }),
   reload(item) {

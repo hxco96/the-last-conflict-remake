@@ -22,16 +22,22 @@ export const CLASSES = {
   Riot: { icon: 'Riot-Specialist_default_x_0', loadout: ['Beretta92'],
     perks: ['Juggernaut', 'HeavyHits', 'BloodLust', 'Agile', 'BluntForce', 'Savagery'] },
   Sniper: { icon: 'crossx_default_x_0', loadout: ['Beretta92'],
-    perks: ['Steady', 'Marksman', 'Hypersonic', 'Headshot', 'Dazzle'] },
+    perks: ['Steady', 'Marksman', 'Hypersonic', 'Headshot', 'Dazzle', 'Deadeye', 'LongShot', 'Focus', 'QuickBolt', 'ColdBlood'] },
   Demo: { icon: 'Demolition_default_x_0', loadout: ['Beretta92'],
     perks: ['ShortFuse', 'BombsAway', 'Kamikaze', 'BigBang'] },
   Medic: { icon: 'Medic_default_x_0', loadout: ['Beretta92'],
     perks: ['MutualCare', 'PainTolerance', 'TraumaCare', 'Sanitation', 'HealingPulse', 'VitalSigns'] },
+  Scout: { icon: 'crossx_default_x_0', loadout: ['Beretta92'],
+    perks: ['Sprinter', 'Lungs', 'Evasive', 'Vaulter', 'Adrenaline'] },
+  Gunner: { icon: 'Demolition_default_x_0', loadout: ['Beretta92'],
+    perks: ['Overwatch', 'AmmoSaver', 'Plated', 'FastMags', 'Overdrive'] },
+  Scavenger: { icon: 'Medic_default_x_0', loadout: ['Beretta92'],
+    perks: ['Forager', 'Pockets', 'Resourceful', 'Lucky'] },
 };
 // HUD scale: phones size the HUD to the short screen edge; tablets cap it so panels stay
 // compact instead of blowing up; desktops use whole steps so pixel fonts stay crisp.
 export const hudScale = (W, H, touch) => (touch ? Math.max(0.75, Math.min(1.3, Math.min(W, H) / 430)) : Math.max(1, Math.round((H - 100) / 400)));
-const FRENZY_PERKS = new Set(['BluntForce', 'Savagery', 'Headshot', 'Dazzle', 'BigBang', 'HealingPulse', 'VitalSigns']);
+const FRENZY_PERKS = new Set(['BluntForce', 'Savagery', 'Headshot', 'Dazzle', 'BigBang', 'HealingPulse', 'VitalSigns', 'Overdrive']);
 const GROUP_NAMES = { 41000: 'Crows', 42000: 'Dogs', 45000: 'Seekers', 46000: 'Reptiles', 44000: 'Venus plants', 49003: 'Roachmen', 47000: 'A boss' };
 
 export class Game {
@@ -360,7 +366,7 @@ export class Game {
   perkMods(slot) {
     const it = slot.item;
     const rifle = it.class === 'rifle', melee = slot.isMelee;
-    const m = { dmg: 1, crit: 0, stun: 0, explosive: 1, radius: 1, rate: 1 };
+    const m = { dmg: 1, crit: 0, stun: 0, explosive: 1, radius: 1, rate: 1, longshot: 0, pierce: 0 };
     if (melee && this.hasPerk('BloodLust')) m.dmg *= 1.25;
     if (rifle && this.hasPerk('Steady') && !this.player.moving) m.dmg *= 1.25;
     if (rifle && this.hasPerk('Hypersonic')) m.crit += 0.2;
@@ -372,6 +378,12 @@ export class Game {
     if (this.hasPerk('BigBang')) m.radius = 1.5;
     if (rifle && this.hasPerk('Marksman')) m.rate = 0.75;
     if (melee && this.hasPerk('Agile')) m.rate = 0.75;
+    if (rifle && this.hasPerk('Focus')) m.crit += 0.3 * Math.min(1, (this.player.stillT || 0) / 1.5);
+    if (rifle && this.hasPerk('LongShot')) m.longshot = 0.5;
+    if (rifle && this.hasPerk('Deadeye')) m.pierce = 1;
+    if (this.hasPerk('Overwatch') && ['smg', 'ar', 'lmg'].includes(it.class)) m.dmg *= 1.2;
+    if (this.hasPerk('Overdrive') && slot.isGun) m.rate *= 0.8;
+    if (this.hasPerk('Lucky') && slot.isGun) m.crit += 0.1;
     return m;
   }
 
@@ -603,8 +615,13 @@ export class Game {
     if (this.dir) this.dir.onMyKill();
     this.fx.spawn('coin', m.x, m.y - 14, { scale: 0.35 });
     if (this.frenzyT <= 0) this.frenzy = Math.min(25, this.frenzy + 1);
-    if (this.hasPerk('HeavyHits')) this.player.hp = Math.min(this.player.maxHp, this.player.hp + 3);
-    const d = Math.random() < this.dir.dropChance() ? this.data.rollDrop(1) : null;
+    const melee = performance.now() - (this.meleeHitAt || -1e9) < 250;
+    if (melee && this.hasPerk('HeavyHits')) this.player.hp = Math.min(this.player.maxHp, this.player.hp + 4);
+    if (!melee && this.hasPerk('ColdBlood')) {
+      const s = this.slots[this.cur];
+      if (s && s.item.class === 'rifle') s.mag = Math.min(s.stat('max-mag'), s.mag + 1);
+    }
+    const d = Math.random() < Math.min(1, this.dir.dropChance() * (this.hasPerk('Forager') ? 1.5 : 1)) ? this.data.rollDrop(1) : null;
     if (d) this.pickups.push(this.makePickup(d.name, m.x, m.y - 6, null));
     if (m.boss) for (let i = 0; i < 3; i++) { const g = this.rollLoot(2, true); if (g) this.pickups.push(this.makePickup(g.name, m.x + i * 12 - 12, m.y, null, null, true)); }
   }
@@ -625,14 +642,17 @@ export class Game {
     }
   }
 
+  // Casings are cosmetic: a few per second at most, kept in a small ring so old ones vanish.
   ejectShell(it, who = this.player) {
+    if (this.time - (this.shellT ?? -1) < 0.3 || Math.random() < 0.4) return;
     const kind = it.class === 'shotgun' ? 'shell-shotgun' : it.class === 'magnum' ? 'shell-magnum' : it.class === 'rifle' ? 'shell-rifle'
       : it.class === 'ar' || it.class === 'lmg' ? 'shell-nato' : 'shell-basic';
     const found = this.atlas.combat.find(kind, ['default'], ['x']);
     if (!found) return;
-    const pl = who;
-    const ctx = this.map.bot.getContext('2d');
-    this.atlas.combat.drawCentered(ctx, found.list[0].f, pl.x + (Math.random() - 0.5) * 24, pl.y + (Math.random() - 0.3) * 10, 1, Math.random() * 6);
+    this.shellT = this.time;
+    const ring = this.shells || (this.shells = []);
+    const sh = { f: found.list[0].f, x: who.x + (Math.random() - 0.5) * 24, y: who.y + (Math.random() - 0.3) * 10, r: Math.random() * 6, z: this.z };
+    if (ring.length < 12) ring.push(sh); else ring[(this.shellI = ((this.shellI || 0) + 1) % 12)] = sh;
   }
 
   explosion(x, y, radius, dmg, element, visualOnly = false) {
@@ -671,6 +691,8 @@ export class Game {
     if (/^(bite|rush|acid|web)$/.test(kind)) dmg *= (this.diff ? this.diff.dmg : 1) * (this.dir ? this.dir.dmgMul : 1);
     this.lastHurt = kind;
     if (this.dir) this.dir.hurt(dmg);
+    if (/^(bite|rush)$/.test(kind) && this.hasPerk('Evasive') && Math.random() < 0.15) { this.fx.spawn('stun', pl.x, pl.y - 20); return; }
+    if (this.hasPerk('Plated')) dmg *= 0.85;
     if (this.hasPerk('PainTolerance')) dmg *= 1 - Math.min(0.5, (pl.maxHp - pl.hp) / 100);
     pl.hp -= dmg;
     pl.hurtT = 0.15;
@@ -757,7 +779,7 @@ export class Game {
       if (!(this.ammo.get(s.ammoKind) > 0) && s.mag <= 0) this.msg('No ammo for ' + s.name, '#ffb0b0');
       return;
     }
-    this.reload = { slot: s, t: 0, dur: s.stat('reload-time') / 1000 };
+    this.reload = { slot: s, t: 0, dur: (s.stat('reload-time') / 1000) * (s.item.class === 'rifle' && this.hasPerk('QuickBolt') ? 0.7 : this.hasPerk('FastMags') ? 0.7 : 1) };
     play.reload(s.item);
   }
 
@@ -775,7 +797,7 @@ export class Game {
     pl.hp = Math.min(pl.maxHp, pl.hp + heal * pl.maxHp);
     if (cure & 2) pl.infection = 0;
     if (cure & 1) this.bleed = 0;
-    if (!(this.hasPerk('TraumaCare') && Math.random() < 0.5)) this.items.set(name, n - 1);
+    if (!((this.hasPerk('TraumaCare') && Math.random() < 0.5) || (this.hasPerk('Resourceful') && Math.random() < 0.35))) this.items.set(name, n - 1);
     this.fx.spawn('heal-quick', pl.x, pl.y - 14);
     play.heal();
     this.msg('Used ' + name, '#9cff9c');
@@ -860,7 +882,8 @@ export class Game {
 
   ammoAmount(p) {
     const cap = this.data.ammoCap.get(p.item['sprite-id']) || 60;
-    return Math.max(1, Math.round((p.amount ?? 0.5) <= 1 ? cap * (p.amount ?? 0.5) : p.amount));
+    const n = Math.max(1, Math.round((p.amount ?? 0.5) <= 1 ? cap * (p.amount ?? 0.5) : p.amount));
+    return this.hasPerk('Pockets') ? Math.ceil(n * 1.25) : n;
   }
 
   collect(p, manual) {
@@ -1079,7 +1102,7 @@ export class Game {
     const pl = this.player;
     if (pl.airborne || pl.stamina < 8) return;
     pl.jumpT = JUMP_TIME;
-    pl.stamina -= 8;
+    if (!this.hasPerk('Vaulter')) pl.stamina -= 8;
     play.jump();
   }
 
@@ -1166,11 +1189,14 @@ export class Game {
     pl.moving = mv.mag > 0;
     const wantRun = inp && (inp.isDown('run') || inp.stickRun);
     pl.running = pl.moving && wantRun && !pl.tired;
-    if (pl.running) { pl.stamina -= 12 * dt; if (pl.stamina <= 0) { pl.stamina = 0; pl.tired = true; } }
+    if (pl.running) { pl.stamina -= (this.hasPerk('Lungs') ? 7 : 12) * dt; if (pl.stamina <= 0) { pl.stamina = 0; pl.tired = true; } }
     else pl.stamina = Math.min(100, pl.stamina + (pl.moving ? 14 : 24) * dt);
     if (pl.tired && pl.stamina > 20) pl.tired = false;
     let speed = pl.running ? RUN : WALK;
     if (s && !this.hasPerk('Agile')) speed *= 1 - Math.min(0.25, (s.item.weight || 0) * 0.3);
+    if (this.hasPerk('Sprinter')) speed *= 1.12;
+    if (this.hasPerk('Adrenaline') && pl.hp < pl.maxHp * 0.4) speed *= 1.2;
+    pl.stillT = pl.moving ? 0 : (pl.stillT || 0) + dt;
     if (this.webbed > 0) { this.webbed -= dt; speed *= 0.45; }
     if (pl.moving) {
       this.stepT = (this.stepT || 0) - dt * (pl.running ? 1.6 : 1);
@@ -1488,6 +1514,7 @@ export class Game {
     const x0 = Math.max(0, Math.floor(camX)), y0 = Math.max(0, Math.floor(camY));
     const w = Math.min(map.pw - x0, Math.ceil(vw) + 2), h = Math.min(map.ph - y0, Math.ceil(vh) + 2);
     if (w > 0 && h > 0) ctx.drawImage(map.bot, x0, y0, w, h, x0, y0, w, h);
+    if (this.shells) for (const sh of this.shells) if (sh.z === this.z && sh.x > camX - 8 && sh.x < camX + vw + 8 && sh.y > camY - 8 && sh.y < camY + vh + 8) this.atlas.combat.drawCentered(ctx, sh.f, sh.x, sh.y, 1, sh.r);
 
     // y-sorted drawables
     const inView = (x, y, pad = 64) => x > camX - pad && x < camX + vw + pad && y > camY - pad && y < camY + vh + pad * 2;
