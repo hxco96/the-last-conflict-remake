@@ -957,7 +957,7 @@ function padTester() {
 
 // Android / Fire OS (Silk) browsers can turn ○ / B into the browser's Back. Keep a spare history
 // entry while playing, and turn Back into "pause" (or "close this menu") instead of leaving.
-function trapBack() { try { if (!(history.state && history.state.tlcr)) history.pushState({ tlcr: 1 }, ''); } catch { /* sandboxed */ } }
+function trapBack() { try { if (!(history.state && history.state.dl)) history.pushState({ dl: 1 }, ''); } catch { /* sandboxed */ } }
 window.addEventListener('popstate', () => {
   if (!session) return;
   trapBack();
@@ -1048,7 +1048,7 @@ function drawSpectateBar() {
   try {
     [assets] = await Promise.all([loadAssets((p) => { loading.textContent = `Loading ${Math.round(p * 100)}%`; }), initAudio()]);
     data = new GameData(assets);
-    window.__tlcr = { frame: (t) => frameBody(t), assets, data, input, settings, profile, get session() { return session; }, get game() { return session ? session.active : null; } };
+    window.__deadline = { frame: (t) => frameBody(t), assets, data, input, settings, profile, get session() { return session; }, get game() { return session ? session.active : null; } };
     loading.style.display = 'none';
     showMenu();
     // Fire tablets: Silk runs the game with browser chrome and swallows more buttons until it's installed

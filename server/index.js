@@ -1,4 +1,4 @@
-// Free-tier friendly matchmaking server for The Last Conflict co-op:
+// Free-tier friendly matchmaking server for Dead Line co-op:
 //  * PeerJS signaling (helps two browsers find each other; gameplay data goes peer to peer)
 //  * a tiny public room registry: GET /rooms lists open games, hosts POST /rooms every few seconds to
 //    stay listed and DELETE /rooms/:code to leave. Private rooms simply never register.

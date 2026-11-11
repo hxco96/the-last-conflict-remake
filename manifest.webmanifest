@@ -1,7 +1,7 @@
 {
-  "name": "The Last Conflict — Remake",
-  "short_name": "Last Conflict",
-  "description": "Top-down zombie survival rebuilt from The Last Conflict's original data.",
+  "name": "Dead Line — Outbreak",
+  "short_name": "Dead Line",
+  "description": "Top-down zombie survival rebuilt from The Dead Line's original data.",
   "start_url": "./",
   "scope": "./",
   "display": "fullscreen",

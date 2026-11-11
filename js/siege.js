@@ -12,7 +12,9 @@ import { cellOf } from './actors.js';
 import { NPC, randomLook } from './npc.js';
 import { play, sample, music, siren } from './sfx.js';
 
-const STORE = 'tlcr-siege-v1';
+const STORE = 'deadline-siege-v1';
+try { if (!localStorage.getItem('deadline-siege-v1') && localStorage.getItem('tlcr-siege-v1')) localStorage.setItem('deadline-siege-v1', localStorage.getItem('tlcr-siege-v1')); } catch { /* no storage */ }
+
 export const DAY_LEN = 150, FIRST_DAY_BONUS = 60, DUSK_LEN = 20;
 const FRONTS = [
   { name: 'NORTH', x: 0, y: -1 }, { name: 'EAST', x: 1, y: 0 }, { name: 'SOUTH', x: 0, y: 1 }, { name: 'WEST', x: -1, y: 0 },

@@ -1,7 +1,7 @@
 // Original game modes, spawn themes and world features that sit on top of the core loop:
-// Evac helicopter (tlcr::app::vehicles::Heli, EvacZone/HeliSpawn markers, "<Radio>" lines),
-// tongue grabs (tlcr::app::monster::Tongue / components::Grabbed), web laying and minion spawns
-// from mob_db attacks, placeable mines (tlcr::app::inventory::ArmedTrap), lingering fire
+// Evac helicopter (helicopter, EvacZone/HeliSpawn markers, "<Radio>" lines),
+// tongue grabs (grabs), web laying and minion spawns
+// from mob_db attacks, placeable mines (armed traps), lingering fire
 // (tilemap::GlobalFlame / GlobalMolotov) and map weather (rain / snow sprites + FMOD ambience).
 import { Atlas } from './assets.js';
 import { T } from './map.js';

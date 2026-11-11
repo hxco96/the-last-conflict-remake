@@ -98,7 +98,9 @@ export const DEFAULT_SETTINGS = {
 export const TOUCH_LABELS = { reload: 'R', grenade: 'NADE', interact: 'USE', heal: 'HEAL', nextWeapon: 'SWAP', prevWeapon: 'PREV',
   lastWeapon: 'LAST', flashlight: 'LIGHT', frenzy: 'FRENZY', run: 'RUN', inventory: 'BAG', shop: 'SHOP', autofire: 'AUTO', drop: 'DROP', jump: 'JUMP', mine: 'MINE' };
 
-const STORE = 'tlcr-settings-v1';
+const STORE = 'deadline-settings-v1';
+try { if (!localStorage.getItem('deadline-settings-v1') && localStorage.getItem('tlcr-settings-v1')) localStorage.setItem('deadline-settings-v1', localStorage.getItem('tlcr-settings-v1')); } catch { /* no storage */ }
+
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 export function loadSettings() {

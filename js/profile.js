@@ -4,7 +4,9 @@
 
 import { tierOf, weaponStats } from './tiers.js';
 
-const STORE = 'tlcr-profile-v1';
+const STORE = 'deadline-profile-v1';
+try { if (!localStorage.getItem('deadline-profile-v1') && localStorage.getItem('tlcr-profile-v1')) localStorage.setItem('deadline-profile-v1', localStorage.getItem('tlcr-profile-v1')); } catch { /* no storage */ }
+
 
 // Difficulty scales mobs and the coin payout.
 export const DIFFICULTY = {
