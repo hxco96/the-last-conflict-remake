@@ -385,6 +385,7 @@ export class Game {
     if (this.hasPerk('Overwatch') && ['smg', 'ar', 'lmg'].includes(it.class)) m.dmg *= 1.2;
     if (this.hasPerk('Overdrive') && slot.isGun) m.rate *= 0.8;
     if (this.hasPerk('Lucky') && slot.isGun) m.crit += 0.1;
+    if (this.talentHook) this.talentHook(slot, m); // siege survivor talents
     return m;
   }
 
@@ -1208,7 +1209,7 @@ export class Game {
     pl.moving = mv.mag > 0;
     const wantRun = inp && (inp.isDown('run') || inp.stickRun);
     pl.running = pl.moving && wantRun && !pl.tired;
-    if (pl.running) { pl.stamina -= (this.hasPerk('Lungs') ? 7 : 12) * dt; if (pl.stamina <= 0) { pl.stamina = 0; pl.tired = true; } }
+    if (pl.running) { pl.stamina -= (this.hasPerk('Lungs') ? 7 : 12) * (this.staminaK ?? 1) * dt; if (pl.stamina <= 0) { pl.stamina = 0; pl.tired = true; } }
     else pl.stamina = Math.min(100, pl.stamina + (pl.moving ? 14 : 24) * dt);
     if (pl.tired && pl.stamina > 20) pl.tired = false;
     let speed = pl.running ? RUN : WALK;

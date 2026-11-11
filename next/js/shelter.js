@@ -52,7 +52,8 @@ export class Shelter {
   get g() { return this.s.g; }
   get c() { return this.s.c; }
   count(kind) { return this.c.fac.filter((f) => f.kind === kind).length; }
-  cap() { return 40 + 20 * this.count('storage'); }
+  cap() { return 40 + 20 * this.count('storage') + (this.s.community('Hoarder') ? 10 : 0); }
+  ruckCap() { return this.c.ruckSlots + (this.s.heroHas('PackMule') ? 1 : 0) + (this.s.partnerWithYou() ? 1 : 0); }
   people() { return 1 + this.s.defenders.filter((d) => d.n.alive).length; }
 
   // ---------- plots: open cells in the base with room around them, nearest the workbench first ----------
@@ -138,17 +139,18 @@ export class Shelter {
   // returns false if the pack stays on the ground
   pickPack(p) {
     const c = this.c, g = this.g;
-    if (c.ruck.length >= c.ruckSlots) {
-      if (!p.warned || g.time - p.warned > 3) { p.warned = g.time; g.msg(`Rucksack full (${c.ruckSlots} slots) — drop it at the supply locker`, '#ffb36b'); }
+    if (c.ruck.length >= this.ruckCap()) {
+      if (!p.warned || g.time - p.warned > 3) { p.warned = g.time; g.msg(`Rucksack full (${this.ruckCap()} slots) — drop it at the supply locker`, '#ffb36b'); }
       return false;
     }
-    c.ruck.push({ kind: p.kind, n: p.n });
-    g.msg(`+ ${RES[p.kind].name} pack (${p.n}) in your rucksack`, RES[p.kind].col);
+    const n = p.n + (this.s.heroHas('Scavenger') ? 1 : 0);
+    c.ruck.push({ kind: p.kind, n });
+    g.msg(`+ ${RES[p.kind].name} pack (${n}) in your rucksack`, RES[p.kind].col);
     play.pickup();
     return true;
   }
 
-  speedMul() { return 1 - 0.06 * this.c.ruck.length; }
+  speedMul() { return (1 - 0.06 * this.c.ruck.length) * (this.s.heroHas('Cardio') ? 1.06 : 1); }
 
   deposit() {
     const c = this.c, g = this.g;
@@ -180,8 +182,10 @@ export class Shelter {
     const c = this.c, g = this.g, notes = [];
     const cap = this.cap(), add = (k, n) => { c.res[k] = Math.max(0, Math.min(cap, c.res[k] + n)); };
     // production
-    if (this.count('garden')) { add('food', 2 * this.count('garden')); notes.push(`+${2 * this.count('garden')} FOOD`); }
-    for (let i = 0; i < this.count('workshop'); i++) if (c.res.mats >= 2) { add('mats', -2); add('ammo', 3); notes.push('+3 AMMO'); }
+    const grow = (2 + (this.s.community('Gardener') ? 1 : 0)) * this.count('garden');
+    if (grow) { add('food', grow); notes.push(`+${grow} FOOD`); }
+    const mk = 3 + (this.s.community('Mechanic') ? 2 : 0);
+    for (let i = 0; i < this.count('workshop'); i++) if (c.res.mats >= 2) { add('mats', -2); add('ammo', mk); notes.push(`+${mk} AMMO`); }
     if (this.count('infirmary') && c.res.meds > 0) {
       add('meds', -1);
       for (const d of this.s.defenders) d.n.hp = d.n.maxHp;
@@ -189,7 +193,8 @@ export class Shelter {
       notes.push('infirmary healed everyone');
     }
     // upkeep
-    const need = Math.ceil(this.people() * (1 - 0.25 * this.count('kitchen')));
+    const need = Math.max(0, Math.ceil(this.people() * (1 - 0.25 * this.count('kitchen'))) - (this.s.community('Cook') ? 1 : 0));
+    if (this.s.community('Leader')) c.morale = Math.min(100, c.morale + 4);
     if (c.res.food >= need) { add('food', -need); c.morale = Math.min(100, c.morale + 5 + 5 * Math.min(1, this.count('kitchen'))); }
     else {
       c.res.food = 0; c.morale = Math.max(0, c.morale - 15);
@@ -237,7 +242,7 @@ export class Shelter {
   // ---------- HUD / shop ----------
   stockLine() {
     const r = this.c.res;
-    return RES_KEYS.map((k) => `${RES[k].short} ${r[k]}`).join('  ') + `   PACK ${this.c.ruck.length}/${this.c.ruckSlots}   MORALE ${this.c.morale}`;
+    return RES_KEYS.map((k) => `${RES[k].short} ${r[k]}`).join('  ') + `   PACK ${this.c.ruck.length}/${this.ruckCap()}   MORALE ${this.c.morale}`;
   }
 
   drawPile(ctx, p, b) {
@@ -257,7 +262,7 @@ export class Shelter {
     for (const k of RES_KEYS) row.append(mk('div', `color:${RES[k].col}`, `${RES[k].name} ${c.res[k]}`));
     wrap.append(row);
     const rs = mk('div', 'display:flex;gap:10px;align-items:center;margin-top:6px;font-family:system-ui,sans-serif;font-size:13px;color:#cfd');
-    rs.append(mk('div', 'flex:1', `Rucksack: ${c.ruck.length}/${c.ruckSlots} slots${c.ruck.length ? ' — ' + c.ruck.map((p) => `${RES[p.kind].short} ${p.n}`).join(', ') : ''}. Each pack slows you 6%.`));
+    rs.append(mk('div', 'flex:1', `Rucksack: ${c.ruck.length}/${this.ruckCap()} slots${c.ruck.length ? ' — ' + c.ruck.map((p) => `${RES[p.kind].short} ${p.n}`).join(', ') : ''}. Each pack slows you 6%.`));
     if (c.ruck.length) rs.append(btn('Drop at locker', () => { this.deposit(); this.s.renderShop(); }));
     const rc = 30 * c.ruckSlots;
     if (c.ruckSlots < 6) rs.append(btn(`Bigger rucksack · ${rc} ⚙`, () => { if (c.scrap < rc) return this.g.msg('Not enough scrap', '#ff8b8b'); c.scrap -= rc; c.ruckSlots++; this.s.save(); this.s.renderShop(); }, c.scrap >= rc));

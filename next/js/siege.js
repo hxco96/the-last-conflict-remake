@@ -12,6 +12,7 @@ import { cellOf } from './actors.js';
 import { NPC, randomLook } from './npc.js';
 import { play, sample, music, siren } from './sfx.js';
 import { Shelter, freshShelter } from './shelter.js';
+import { TALENTS, makeBio, hasTalent, talentName } from './survivors.js';
 
 const STORE = 'tlcr-siege-v1';
 export const DAY_LEN = 150, FIRST_DAY_BONUS = 60, DUSK_LEN = 20;
@@ -29,7 +30,7 @@ const GUNS = [['Beretta92', 'Police-Handgun', 'UMP45'], ['MP5', 'SA80', 'Spas-12
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 
 // ---------- campaign save ----------
-const fresh = () => ({ ...freshShelter(), night: 1, scrap: 60, boards: 6, up: { walls: 0, barracks: 0, armory: 0, medic: 0, lights: 0 }, vets: [], best: 1, kills: 0, runs: 0, deaths: 0 });
+const fresh = () => ({ ...freshShelter(), hero: null, partnerId: null, memorial: [], night: 1, scrap: 60, boards: 6, up: { walls: 0, barracks: 0, armory: 0, medic: 0, lights: 0 }, vets: [], best: 1, kills: 0, runs: 0, deaths: 0 });
 function readAll() { try { return JSON.parse(localStorage.getItem(STORE) || '{}'); } catch { return {}; } }
 export function loadCampaign(map) { const c = readAll()[map]; return c ? { ...fresh(), ...c, up: { ...fresh().up, ...c.up }, res: { ...fresh().res, ...c.res } } : fresh(); }
 export function saveCampaign(map, c) { try { const all = readAll(); all[map] = c; localStorage.setItem(STORE, JSON.stringify(all)); } catch { /* storage unavailable */ } }
@@ -160,6 +161,7 @@ export class Siege {
     this.syncDirector();
     this.bolster();
     this.shelter.init();
+    this.setupHero();
     this.applyWalls(true);
     // put the player at the camp
     const pl = g.player;
@@ -201,6 +203,46 @@ export class Siege {
 
   save() { saveCampaign(this.mapName, this.c); }
   inBase(x, y) { const [cx, cy] = cellOf({ x, y }); return this.zones.inBase.has(cy * this.zones.W + cx); }
+  // ---------- the survivor you play as, and community talents ----------
+  setupHero() {
+    const g = this.g, c = this.c, pl = g.player;
+    for (const v of c.vets) { makeBio(v); v.here = false; } // who is in camp is decided fresh each session
+    if (!c.hero) c.hero = makeBio({ id: Date.now(), name: (pl.look && pl.look.name) || 'You', kind: 'survivor', look: pl.look, nights: 0 });
+    const h = c.hero;
+    if (h.look && h.look.layers) pl.look = h.look;
+    if (this.heroHas('Tough')) pl.maxHp = Math.round(pl.maxHp * 1.2);
+    pl.hp = pl.maxHp;
+    g.staminaK = this.heroHas('Cardio') ? 0.7 : 1;
+    g.talentHook = (slot, m) => {
+      const cl = slot.item.class;
+      if (this.heroHas('Gunslinger') && ['handgun', 'magnum', 'smg'].includes(cl)) m.dmg *= 1.2;
+      if (this.heroHas('Rifleman') && ['rifle', 'ar'].includes(cl)) m.dmg *= 1.2;
+      if (this.heroHas('Brawler') && slot.isMelee) m.dmg *= 1.25;
+      if (this.heroHas('NightOwl') && this.phase === 'night') m.dmg *= 1.15;
+      if (this.heroHas('Lucky')) m.crit += 0.06;
+    };
+    g.msg(`You are ${h.name}: ${h.talents.map(talentName).join(', ')}`, '#9cd4ff');
+  }
+
+  heroHas(t) { return hasTalent(this.c.hero, t); }
+  // a community talent counts while its owner (you, or anyone alive in camp) is around
+  community(t) { return this.heroHas(t) || this.defenders.some((d) => d.n.alive && hasTalent(d.v, t)); }
+  partner() { const d = this.defenders.find((x) => x.v.id === this.c.partnerId); return d && d.n.alive ? d : null; }
+  partnerWithYou() { const d = this.partner(), pl = this.g.player; return !!(d && d.n.mode === 'follow' && Math.hypot(d.n.x - pl.x, d.n.y - pl.y) < 220); }
+
+  setPartner(v) {
+    const c = this.c, old = this.partner();
+    if (old) old.n.mode = 'post';
+    c.partnerId = v && c.partnerId !== v.id ? v.id : null;
+    const d = this.partner();
+    if (d) {
+      if (this.phase === 'day') d.n.mode = 'follow';
+      d.n.say(['Right behind you.', "Let's go.", 'I got your back.']);
+      this.g.msg(`${d.v.name} is your partner: follows you on runs and carries an extra pack`, '#9cd4ff');
+    }
+    this.save();
+  }
+
   get slots() { return 2 + this.c.up.barracks + this.bunks; }
 
   dismiss(d, text) {
@@ -220,6 +262,8 @@ export class Siege {
     music('playlist', true);
     this.scatterPiles();
     this.arrivals();
+    const pd = this.partner();
+    if (pd) pd.n.mode = 'follow';
     this.save();
     this.say(`DAY ${this.c.night}`, '#ffd36b', 'Loot supplies, carry them home to the locker, build up the shelter.');
   }
@@ -259,7 +303,7 @@ export class Siege {
       const names = look.female ? g.assets.barks.names_f : g.assets.barks.names_m;
       const name = names && names.length ? names[Math.floor(Math.random() * Math.min(names.length, 200))] : kind;
       const lvl = Math.min(3, Math.floor((up.armory + c.night / 3) / 1.5));
-      const v = { id: Date.now() + Math.random(), name, kind, look: { name, ...look }, nights: 0, gun: kind === 'soldier' ? pick(GUNS[lvl]) : null, fallen: false, here: false };
+      const v = makeBio({ id: Date.now() + Math.random(), name, kind, look: { name, ...look }, nights: 0, gun: kind === 'soldier' ? pick(GUNS[lvl]) : null, fallen: false, here: false });
       c.vets.push(v);
       this.place(v, false);
     }
@@ -289,7 +333,7 @@ export class Siege {
     const weapon = v.kind === 'soldier' ? g.data.item(v.gun) : null;
     const n = new NPC(x, y, v.kind, v.look, v.name, weapon);
     n.homeX = x; n.homeY = y;
-    n.mode = 'post';
+    n.mode = v.id === this.c.partnerId && this.phase === 'day' ? 'follow' : 'post';
     n.vet = v;
     const hpK = 1 + 0.06 * Math.min(10, v.nights);
     n.maxHp = n.hp = Math.round(n.maxHp * hpK);
@@ -312,8 +356,9 @@ export class Siege {
         this.defenders = this.defenders.filter((x) => x !== d);
         g.npcs = g.npcs.filter((x) => x !== n);
         g.msg(`${d.v.name} has fallen. They will not return.`, '#ff8b8b');
+        if (d.v.id === this.c.partnerId) this.c.partnerId = null;
         this.shelter.onFallen();
-      } else if (n.alive && med && this.inBase(n.x, n.y)) n.hp = Math.min(n.maxHp, n.hp + 1.2 * med * dt);
+      } else if (n.alive && med && this.inBase(n.x, n.y)) n.hp = Math.min(n.maxHp, n.hp + 1.2 * med * (this.community('Medic') ? 1.5 : 1) * dt);
     }
   }
 
@@ -332,7 +377,7 @@ export class Siege {
     if (this.c.ruck.length && this.phase !== 'night' && Math.hypot(pl.x - this.zones.anchor.x, pl.y - this.zones.anchor.y) < 34) this.shelter.deposit();
     // field hospital
     const med = this.c.up.medic;
-    if (med && pl.hp < pl.maxHp && this.inBase(pl.x, pl.y)) { this.regenAcc += 1.5 * med * dt; if (this.regenAcc >= 1) { pl.hp = Math.min(pl.maxHp, pl.hp + 1); this.regenAcc -= 1; } }
+    if (med && pl.hp < pl.maxHp && this.inBase(pl.x, pl.y)) { this.regenAcc += 1.5 * med * (this.community('Medic') ? 1.5 : 1) * dt; if (this.regenAcc >= 1) { pl.hp = Math.min(pl.maxHp, pl.hp + 1); this.regenAcc -= 1; } }
 
     if (this.phase === 'day') {
       this.t -= dt;
@@ -382,6 +427,7 @@ export class Siege {
     this.piles = [];
     this.plan = this.planNight();
     this.shelter.dusk();
+    for (const d of this.defenders) if (d.n.mode === 'follow') { d.n.mode = 'post'; d.n.x = d.n.homeX; d.n.y = d.n.homeY; }
     this.applyWalls(true);
     this.save();
     siren(DUSK_LEN);
@@ -577,6 +623,18 @@ export class Siege {
     const c = this.c;
     c.deaths++;
     c.scrap = Math.floor(c.scrap * 0.75);
+    const h = c.hero;
+    if (h) {
+      // your survivor is gone for good; someone else from the community carries on
+      c.memorial.push({ name: h.name, bio: h.bio, talents: h.talents, night: c.night });
+      if (c.memorial.length > 30) c.memorial = c.memorial.slice(-30);
+      const pool = c.vets.filter((v) => !v.fallen);
+      const next = pool.find((v) => v.here) || pool[0];
+      if (next) { c.vets = c.vets.filter((v) => v !== next); if (next.id === c.partnerId) c.partnerId = null; c.hero = makeBio(next); }
+      else c.hero = makeBio({ id: Date.now(), name: 'A stranger', kind: 'survivor', look: randomLook('survivor', this.g.atlas.core), nights: 0 });
+      if (!c.hero.look.name) c.hero.look = { name: c.hero.name, ...c.hero.look };
+      this.g.msg(`${h.name} is gone. You carry on as ${c.hero.name} (${c.hero.talents.map(talentName).join(', ')}).`, '#ffd36b');
+    }
     c.boards = Math.max(c.boards, 4);
     this.save();
     this.g.msg(`The base fell on night ${c.night}. You will start this night again.`, '#ff6b6b');
@@ -676,13 +734,8 @@ export class Siege {
     const sup = mk('div', 'display:flex;flex-wrap:wrap;gap:8px');
     sup.append(btn('Boards ×1 · 4 ⚙', () => this.buy('s', 'boards'), c.scrap >= 4), btn('Ammo crate · 30 ⚙', () => this.buy('s', 'ammo'), c.scrap >= 30), btn('Herbs · 25 ⚙', () => this.buy('s', 'medkit'), c.scrap >= 25));
     panel.append(sup);
-    panel.append(mk('div', 'font-size:22px;margin:12px 0 4px;color:#9cd4ff', `CAMP ROSTER (${this.defenders.length}/${this.slots} slots)`));
-    const live = c.vets.filter((v) => !v.fallen);
-    const lines = live.length ? live.map((v) => `${v.here ? '●' : '○'} ${v.name} · ${v.kind === 'soldier' ? v.gun || 'soldier' : 'scavenger'} · ${v.nights} night${v.nights === 1 ? '' : 's'}${v.here ? '' : ' · away'}`) : ['Nobody yet — survivors find lit camps.'];
-    panel.append(mk('div', 'font-family:system-ui,sans-serif;font-size:13px;color:#cfd;line-height:1.5', lines.join('\n'), { style: 'white-space:pre-line' }));
-    const fallen = c.vets.filter((v) => v.fallen);
-    if (fallen.length) panel.append(mk('div', 'font-family:system-ui,sans-serif;font-size:12px;color:#a66;margin-top:4px', `Fallen: ${fallen.map((v) => v.name).join(', ')}`));
-    panel.append(mk('div', 'font-family:system-ui,sans-serif;font-size:12px;color:#889;margin-top:8px', `Best night ${c.best} · ${c.kills} kills · base fell ${c.deaths}×. Progress saves automatically; dying costs 25% scrap and repeats the night.`));
+    this.rosterPanel(panel, mk, btn);
+    panel.append(mk('div', 'font-family:system-ui,sans-serif;font-size:12px;color:#889;margin-top:8px', `Best night ${c.best} · ${c.kills} kills · base fell ${c.deaths}×. Progress saves automatically; if you die, that survivor is gone for good: you carry on as someone else, the base loses 25% scrap and repeats the night.`));
     const foot = mk('div', 'display:flex;gap:8px;flex-wrap:wrap;margin-top:14px');
     foot.append(btn('Close', () => this.closeShop()));
     if (this.phase === 'day') foot.append(btn('Call dusk early', () => this.buy('s', 'early')));
@@ -691,6 +744,35 @@ export class Siege {
     foot.append(wipe);
     panel.append(foot);
     root.replaceChildren(panel);
+  }
+
+  // community screen: you, the people in camp (with partner buttons) and the fallen
+  rosterPanel(panel, mk, btn) {
+    const c = this.c, sm = 'font-family:system-ui,sans-serif;font-size:12px;';
+    const tl = (v) => (v.talents || []).map((t) => `${talentName(t)}${TALENTS[t] && TALENTS[t].kind === 'community' ? ' ★' : ''}`).join(' · ');
+    const h = c.hero;
+    if (h) {
+      panel.append(mk('div', 'font-size:22px;margin:12px 0 4px;color:#9cd4ff', `YOU: ${h.name.toUpperCase()}`));
+      panel.append(mk('div', sm + 'color:#cfd', h.bio || ''));
+      for (const t of h.talents || []) panel.append(mk('div', sm + 'color:#ffd36b', `${talentName(t)} — ${TALENTS[t] ? TALENTS[t].desc : ''}`));
+    }
+    panel.append(mk('div', 'font-size:22px;margin:12px 0 4px;color:#9cd4ff', `COMMUNITY (${this.defenders.length}/${this.slots} in camp)`));
+    panel.append(mk('div', sm + 'color:#889', '★ community talent: helps the whole base while they are in camp. Your partner follows you by day and carries an extra pack.'));
+    const live = c.vets.filter((v) => !v.fallen);
+    if (!live.length) panel.append(mk('div', sm + 'color:#cfd', 'Nobody yet — survivors find lit camps.'));
+    for (const v of live) {
+      const row = mk('div', 'display:flex;gap:10px;align-items:center;padding:5px 0;border-bottom:1px solid #1d2026');
+      const info = mk('div', 'flex:1;min-width:0');
+      const role = v.kind === 'soldier' ? v.gun || 'soldier' : 'scavenger';
+      info.append(mk('div', 'font-size:18px', `${v.here ? '●' : '○'} ${v.name} · ${role} · ${v.nights} night${v.nights === 1 ? '' : 's'}${v.here ? '' : ' · away'}${v.id === c.partnerId ? ' · PARTNER' : ''}`));
+      info.append(mk('div', sm + 'color:#9aa', v.bio || ''));
+      info.append(mk('div', sm + 'color:#ffd36b', tl(v)));
+      row.append(info);
+      if (v.here) row.append(btn(v.id === c.partnerId ? 'Dismiss partner' : 'Make partner', () => { this.setPartner(v); this.renderShop(); }, true));
+      panel.append(row);
+    }
+    const fallen = c.vets.filter((v) => v.fallen).map((v) => v.name).concat((c.memorial || []).map((m) => `${m.name} (you, night ${m.night})`));
+    if (fallen.length) panel.append(mk('div', sm + 'color:#a66;margin-top:4px', `In memory: ${fallen.join(', ')}`));
   }
 
   // ---------- drawing ----------
@@ -730,7 +812,7 @@ export class Siege {
     if (this.phase === 'night') { ctx.fillStyle = `rgba(90,0,0,${0.08 + 0.04 * Math.sin(g.time * 2)})`; ctx.fillRect(0, 0, W, H); }
     ctx.textAlign = 'center';
     // stockpile strip under the top HUD
-    const line = this.shelter.stockLine();
+    const line = `${this.c.hero ? this.c.hero.name.toUpperCase() + '   ' : ''}${this.shelter.stockLine()}`;
     ctx.font = `${Math.round(13 * u)}px Bebas, Impact, sans-serif`;
     const lw = ctx.measureText(line).width + 16 * u;
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(W / 2 - lw / 2, 68 * u, lw, 18 * u);
