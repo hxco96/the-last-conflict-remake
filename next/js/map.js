@@ -8,7 +8,9 @@ const SOLID_TYPES = new Set(['Obstruction', 'Wall', 'WallTop', 'VoidAll', 'Tree'
 const SOLID_SETS = new Set(['walls', 'walls_wframe', 'wall_tops']);
 const SHOT_PASS_TYPES = new Set(['Obstruction', 'Car', 'Window']);
 const CADE_RE = /^(Cade|HeavyCade|Fence|Shutter)_(\d+)%$/;
-const CADE_HP = { Cade: 400, HeavyCade: 1200, Fence: 600, Shutter: 1500, Boarded: 240 };
+// An infected hit does 20 (40+ for big ones). These hold a small group for a while without lasting all run;
+// Siege multiplies them through its wall upgrades.
+const CADE_HP = { Cade: 700, HeavyCade: 1800, Fence: 900, Shutter: 2200, Boarded: 420 };
 const STAGES = [100, 75, 50, 25, 0];
 export const MARKERS = new Set(['PlayerSpawn', 'MobSpawn', 'Soilder', 'RanAmmo', 'RanHerb', 'RanMelee', 'BlockP', 'BlockC',
   'SpawnRed', 'SpawnGreen', 'SpawnPink', 'SpawnBlue', 'Survivor', 'EvacZone', 'HeliSpawn', 'HeliWayPoint', 'RanPoster',

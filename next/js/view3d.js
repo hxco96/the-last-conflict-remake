@@ -137,7 +137,13 @@ export class View3D {
     this.sideMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   }
 
-  resize(w, h) {
+  resize(w, h, over) {
+    // sit exactly under the HUD canvas (it is inset on phones with notches)
+    if (over && (this.rectT = (this.rectT || 0) - 1) <= 0) {
+      this.rectT = 30;
+      const r = over.getBoundingClientRect(), st = this.canvas.style;
+      st.left = r.left + 'px'; st.top = r.top + 'px'; st.width = r.width + 'px'; st.height = r.height + 'px';
+    }
     if (w === this.w && h === this.h) return;
     this.w = w; this.h = h;
     this.renderer.setSize(w, h, false);
@@ -356,22 +362,26 @@ export class View3D {
     const size = e.size || 96;
     const b = this.sprite(e.key, size);
     b.seen = this.frame;
+    b.s.visible = true;
+    b.s.position.set(e.x / T, 0, e.y / T);
+    b.shadow.visible = e.shadow !== false;
+    b.shadow.position.set(e.x / T, 0.012, e.y / T);
+    // `every`: seconds between repaints; the picture is drawn relative to the actor, so it can be reused as it moves
+    if (e.every && b.painted && this.now - b.paintT < e.every) return;
+    b.painted = true; b.paintT = this.now;
     const { ctx, c } = b;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
     ctx.setTransform(1, 0, 0, 1, Math.round(size / 2 - e.x), Math.round(size - PAD - e.y));
     ctx.save(); e.draw(ctx); ctx.restore();
     b.t.needsUpdate = true;
-    b.s.visible = true;
-    b.s.position.set(e.x / T, 0, e.y / T);
-    b.shadow.visible = e.shadow !== false;
-    b.shadow.position.set(e.x / T, 0.012, e.y / T);
   }
 
   // ---------- frame ----------
   begin(map, dt) {
     if (map !== this.map || (map.ver || 0) !== this.mapVer) { this.mapVer = map.ver || 0; this.setMap(map); }
     this.frame++;
+    this.now = (this.now || 0) + dt;
     this.sigT -= dt;
     if (this.sigT <= 0) {
       this.sigT = 0.2;

@@ -19,6 +19,11 @@ import { rollMod, modName, modColor } from './mods.js';
 // Group unlock delays from spawn_levels_*.rktd are in seconds; scaled so a solo run sees them sooner.
 const TIME_SCALE = 1 / 3;
 const AMBIENT_DARK = 0.8;
+const CALLINS = [
+  { id: 'ammo', name: 'Ammo depot', line: 'Supply drop on your position. Stock up.' },
+  { id: 'strike', name: 'Mortar strike', line: 'Rounds out. Keep your head down.' },
+  { id: 'squad', name: 'Reinforcements', line: 'Two of ours are coming to you.' },
+];
 
 export const CLASSES = {
   Riot: { icon: 'Riot-Specialist_default_x_0', loadout: ['Beretta92'],
@@ -510,6 +515,10 @@ export class Game {
     // buildings are the safest places: never spawn infected inside one (unless that leaves no cells)
     const outdoor = cells.filter(([x, y]) => !map.isInterior(x, y));
     if (outdoor.length) cells = outdoor;
+    // the infected come in from the outskirts: keep to the outer band of the map when it has room
+    const band = Math.max(6, Math.round(Math.min(map.w, map.h) * 0.18));
+    const edge = cells.filter(([x, y]) => Math.min(x, y, map.w - 1 - x, map.h - 1 - y) < band);
+    if (edge.length >= 12) cells = edge;
     return (map._spawnCells = cells);
   }
 
@@ -619,6 +628,7 @@ export class Game {
   // Credit for a kill you landed: frenzy, perks and the loot roll (loot is per player in co-op).
   killReward(m) {
     this.kills++;
+    this.callinCheck();
     if (this.dir) this.dir.onMyKill();
     this.fx.spawn('coin', m.x, m.y - 14, { scale: 0.35 });
     if (this.frenzyT <= 0) this.frenzy = Math.min(25, this.frenzy + 1);
@@ -632,6 +642,77 @@ export class Game {
     if (d) this.pickups.push(this.makePickup(d.name, m.x, m.y - 6, null));
     if (m.boss || Math.random() < 0.03) this.pickups.push(this.modPickup(rollMod(m.boss), m.x + 8, m.y - 4));
     if (m.boss) for (let i = 0; i < 3; i++) { const g = this.rollLoot(2, true); if (g) this.pickups.push(this.makePickup(g.name, m.x + i * 12 - 12, m.y, null, null, true)); }
+  }
+
+  // ---------- kill call-ins: earned at 100, 175, 250 kills and every 75 after ----------
+  callinCheck() {
+    if (this.opts.lobby || this.opts.mode === 'Peaceful') return;
+    this.callNext = this.callNext ?? 100;
+    this.callins = this.callins || [];
+    while (this.kills >= this.callNext) {
+      const c = CALLINS[(this.callIdx = (this.callIdx ?? -1) + 1) % CALLINS.length];
+      this.callins.push(c);
+      this.callNext += 75;
+      this.msg(`${this.kills} KILLS — call-in earned: ${c.name}. ${this.input && this.input.touchUI ? 'Tap CALL' : 'Press Z'} to use it.`, '#7dff8a');
+      play.radio();
+    }
+  }
+
+  useCallin() {
+    const c = this.callins && this.callins.shift();
+    if (!c) return;
+    const pl = this.player;
+    const near = (r = 60) => this.map.randomWalkable({ x: pl.x - r, y: pl.y - r, w: r * 2, h: r * 2 }) || { x: pl.x, y: pl.y };
+    this.msg(`<Radio> ${c.line}`, '#9cd4ff');
+    play.radio();
+    if (c.id === 'ammo') {
+      // every gun you hold is filled to the brim, plus herbs and boards on the ground
+      const used = new Set(this.slots.filter((s) => s && s.isGun).map((s) => s.ammoKind));
+      for (const s of this.slots) {
+        if (!s || !s.isGun) continue;
+        const k = s.ammoKind;
+        if (!this.ammo.has(k)) this.ammo.claim(k, this.ammo.cap(k), this.ammo.slots.findIndex((x) => !used.has(x.kind)));
+        this.ammo.set(k, this.ammo.cap(k));
+        s.mag = s.stat('max-mag');
+      }
+      for (const [n, a] of [['Herb-G', 1], ['Herb-R', 1], ['Boards', 4]]) { const p = near(); this.pickups.push(this.makePickup(n, p.x, p.y - 6, a)); }
+      this.fx.spawn('dust', pl.x, pl.y - 6, { scale: 2 });
+    } else if (c.id === 'strike') {
+      // shells walk through the infected nearest to you (never right on top of you)
+      const targets = this.mobs.filter((m) => m.alive).map((m) => [m, Math.hypot(m.x - pl.x, m.y - pl.y)]).filter((e) => e[1] > 110 && e[1] < 520).sort((a, b) => a[1] - b[1]).slice(0, 7);
+      this.strikes = this.strikes || [];
+      targets.forEach(([m], i) => this.strikes.push({ t: 0.8 + i * 0.3, m, x: m.x, y: m.y }));
+      if (!targets.length) this.msg('No targets in range — the strike was wasted', '#ffb36b');
+    } else if (c.id === 'squad') {
+      for (let i = 0; i < 2; i++) { const p = near(70); const n = spawnNPC(this, 'soldier', p.x, p.y); n.mode = 'follow'; this.fx.spawn('dust', p.x, p.y - 6, { scale: 1.4 }); }
+    }
+  }
+
+  updateStrikes(dt) {
+    if (!this.strikes || !this.strikes.length) return;
+    const pl = this.player;
+    for (const s of this.strikes) {
+      s.t -= dt;
+      if (s.t > 0) continue;
+      s.done = true;
+      const x = s.m.alive ? s.m.x : s.x, y = s.m.alive ? s.m.y : s.y;
+      if (Math.hypot(x - pl.x, y - pl.y) < 100) continue; // too close to you: that shell is held
+      this.explosion(x, y - 8, 85, 900, 'reg');
+    }
+    this.strikes = this.strikes.filter((s) => !s.done);
+  }
+
+  drawCallin(ctx, W, H) {
+    const c = this.callins && this.callins[0];
+    if (!c || (this.input && this.input.touchUI)) return; // on touch the CALL button itself is the prompt
+    const u = Math.max(1, Math.round(H / 400));
+    ctx.textAlign = 'center';
+    ctx.font = `${Math.round(14 * u)}px Bebas, Impact, sans-serif`;
+    const txt = `CALL-IN READY: ${c.name.toUpperCase()} — ${this.input && this.input.touchUI ? 'TAP CALL' : 'PRESS Z'}${this.callins.length > 1 ? `  (+${this.callins.length - 1})` : ''}`;
+    ctx.globalAlpha = 0.75 + 0.25 * Math.sin(this.time * 5);
+    ctx.fillStyle = '#000'; ctx.fillText(txt, W / 2 + 1, 104 * u + 1);
+    ctx.fillStyle = '#7dff8a'; ctx.fillText(txt, W / 2, 104 * u);
+    ctx.globalAlpha = 1; ctx.textAlign = 'left';
   }
 
   // Blood on every gun or melee hit: a spray at the wound and drops on the floor behind the target,
@@ -929,13 +1010,10 @@ export class Game {
       // auto: only tops up a slot already holding this type; manual (Use) claims a free slot
       // or replaces a slot whose ammo none of your weapons use
       const id = p.item['sprite-id'];
+      const used = new Set(this.slots.filter((s) => s && s.isGun).map((s) => s.ammoKind));
+      if (!used.has(id)) { if (manual) this.msg(`None of your guns use ${p.name}`, '#ffb0b0'); return false; }
       let got = this.ammo.topUp(id, this.ammoAmount(p));
-      if (!got && manual && !this.ammo.has(id)) {
-        const used = new Set(this.slots.filter((s) => s && s.isGun).map((s) => s.ammoKind));
-        const repl = this.ammo.slots.findIndex((s) => !used.has(s.kind));
-        got = this.ammo.claim(id, this.ammoAmount(p), repl);
-        if (!got) { this.msg('Ammo slots full — every slot feeds one of your guns', '#ffb0b0'); return false; }
-      }
+      if (!got && !this.ammo.has(id)) got = this.ammo.claim(id, this.ammoAmount(p), this.ammo.slots.findIndex((s) => !used.has(s.kind)));
       if (!got) return false;
       this.msg('+' + got + ' ' + p.name);
     } else if (p.kind === 'throwable') {
@@ -1046,6 +1124,7 @@ export class Game {
       this.input = inp;
       this.checkStairs();
       this.updateFollowers(dt);
+      this.updateStrikes(dt);
       sfx.listener.x = pl.x; sfx.listener.y = pl.y;
     }
     if (!pl.alive && !this.ghost) {
@@ -1127,6 +1206,7 @@ export class Game {
     if (P('toggleThrowable')) { const n = this.throwables.cycle(); this.msg(n ? `Throwable: ${n} ×${this.throwables.counts.get(n)}` : 'No throwables', '#ffd36b'); }
     if (P('heal')) this.quickHeal();
     if (P('flashlight')) { this.flashlight = !this.flashlight; play.flashlight(); }
+    if (P('callin') || inp.tapped.has('KeyZ')) this.useCallin();
     if (P('frenzy') && this.frenzy >= 25 && this.frenzyT <= 0) { this.frenzyT = 15; this.frenzy = 0; this.msg('FRENZY!', '#ff4bd1'); play.frenzy(); }
     for (let i = 0; i < this.slots.length; i++) if (P('slot' + (i + 1))) select(i);
     if (P('nextWeapon')) cycle(1);
@@ -1224,7 +1304,10 @@ export class Game {
     const mv = inp ? inp.move : { x: 0, y: 0, mag: 0 };
     const mx = mv.x, my = mv.y;
     pl.moving = mv.mag > 0;
-    const wantRun = inp && (inp.isDown('run') || inp.stickRun);
+    const kbRun = inp && (inp.settings.keys.run || []).some((c) => inp.keys.has(c));
+    if (inp && inp.pressed('run') && !kbRun) inp.runLock = !inp.runLock;
+    if (inp && (!pl.moving || pl.tired)) inp.runLock = false;
+    const wantRun = inp && (kbRun || inp.runLock);
     pl.running = pl.moving && wantRun && !pl.tired;
     if (pl.running) { pl.stamina -= (this.hasPerk('Lungs') ? 7 : 12) * (this.staminaK ?? 1) * dt; if (pl.stamina <= 0) { pl.stamina = 0; pl.tired = true; } }
     else pl.stamina = Math.min(100, pl.stamina + (pl.moving ? 14 : 24) * dt);
@@ -1608,6 +1691,7 @@ export class Game {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (this.ext) this.ext.drawScreen(ctx, cv.width, cv.height, Math.max(1, Math.round(cv.height / 400)));
     this.drawHud(ctx, cv.width, cv.height);
+    this.drawCallin(ctx, cv.width, cv.height);
     if (this.dir) this.dir.drawScreen(ctx, cv.width, cv.height);
     this.drawMinimap(ctx, cv.width, cv.height);
     if (this.coop) this.coop.drawScreen(this, ctx, cv.width, cv.height);
@@ -1619,7 +1703,7 @@ export class Game {
   render3d(v3) {
     const ctx = this.ctx, cv = this.canvas, pl = this.player, map = this.map;
     this.v3 = v3;
-    v3.resize(cv.width, cv.height);
+    v3.resize(cv.width, cv.height, cv);
     const short = Math.min(cv.height, cv.width * 0.75);
     const zoom = this.zoom = short < 500 ? Math.max(1.5, Math.round((short / 230) * 2) / 2) : Math.max(2, Math.round(cv.height / 330));
     const focus = this.ghost ? this.spec : pl;
@@ -1643,11 +1727,11 @@ export class Game {
 
     // billboards
     const inView = (x, y, pad = 64) => x > camX - pad && x < camX + vw + pad && y > camY - pad && y < camY + vh + pad * 2;
-    for (const p of this.pickups) if (inView(p.x, p.y)) v3.billboard({ key: p, x: p.x, y: p.y + 12, size: 48, shadow: false, draw: (c) => this.drawPickup(c, p) });
+    for (const p of this.pickups) if (inView(p.x, p.y)) v3.billboard({ key: p, x: p.x, y: p.y + 12, size: 48, shadow: false, every: 0.1, draw: (c) => this.drawPickup(c, p) });
     for (const m of this.mobs) {
       if (!inView(m.x, m.y)) continue;
       const size = m.boss || m.radius >= 14 ? 160 : 96;
-      v3.billboard({ key: m, x: m.x, y: m.y, size, shadow: m.alive, draw: (c) => { if (m.elite && m.alive) this.dir.drawElite(c, m); m.draw(c, this.atlas.infected, perf.lite); } });
+      v3.billboard({ key: m, x: m.x, y: m.y, size, shadow: m.alive, every: m.flash > 0 ? 0 : !m.alive ? 0.25 : perf.lite ? 0.14 : 0.08, draw: (c) => { if (m.elite && m.alive) this.dir.drawElite(c, m); m.draw(c, this.atlas.infected, perf.lite); } });
     }
     if (!this.ghost) v3.billboard({ key: pl, x: pl.x, y: pl.y, draw: (c) => pl.draw(c, this.atlas.core, () => this.drawHeldWeapon(c)) });
     for (const n of this.npcs) if (inView(n.x, n.y)) v3.billboard({ key: n, x: n.x, y: n.y, shadow: n.alive, draw: (c) => n.draw(c, this.atlas.core, n.weapon || n.carry ? () => this.drawWeapon(c, n, n.weapon || n.carry, n.recoilT > 0, n.flashT > 0) : null) });
@@ -1685,6 +1769,7 @@ export class Game {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (this.ext) this.ext.drawScreen(ctx, cv.width, cv.height, Math.max(1, Math.round(cv.height / 400)));
     this.drawHud(ctx, cv.width, cv.height);
+    this.drawCallin(ctx, cv.width, cv.height);
     if (this.dir) this.dir.drawScreen(ctx, cv.width, cv.height);
     this.drawMinimap(ctx, cv.width, cv.height);
     if (this.coop) this.coop.drawScreen(this, ctx, cv.width, cv.height);
@@ -2144,6 +2229,8 @@ export class Game {
     const tsel = this.throwables.sel;
     const L = inp.layoutTouch(W, H, this.legacy, {
       frenzyReady: this.frenzy >= 25 && this.frenzyT <= 0,
+      callReady: !!(this.callins && this.callins.length),
+      runOn: !!inp.runLock,
       canReload: !!(s && s.isGun && !this.reload && s.mag < s.stat('max-mag') && this.ammo.get(s.ammoKind) > 0),
       useLabel: target ? (target.type === 'pickup' ? 'TAKE' : target.type === 'door' ? 'DOOR' : 'USE') : null,
       canHeal: pl.hp < pl.maxHp * 0.7 && healItems.some((n) => this.items.get(n) > 0),

@@ -837,7 +837,7 @@ function showSettings(back) {
         el('div', { class: 'opts' },
           slider('Stick deadzone', 'deadzone', 0.05, 0.45, 0.01, (v) => Math.round(v * 100) + '%'),
           toggle('Vibration', 'vibration'),
-          toggle('Run at full stick tilt', 'stickRun')),
+          el('p', { class: 'sub left' }, 'Run: tap RUN on touch, click the left stick on a controller, hold Shift on keyboard.')),
         el('div', { class: 'row' }, el('small', {}, 'Button names: '), style('auto', 'Auto'), style('ps', 'PlayStation'), style('xbox', 'Xbox'))),
       section('Fixed buttons',
         el('p', { class: 'sub left' }, 'Inventory is always the PS4 / PS5 touchpad click. Options pauses, sticks move and aim, D-pad picks weapons.')),
@@ -856,7 +856,7 @@ function showSettings(back) {
           slider('Control size', 'touchScale', 0.7, 1.5, 0.05, (v) => Math.round(v * 100) + '%'),
           slider('Control opacity', 'touchOpacity', 0.2, 1, 0.05, (v) => Math.round(v * 100) + '%'),
           toggle('Left-handed layout', 'leftHanded', 'mirror sticks and buttons'),
-          toggle('Run at full stick tilt', 'stickRun'))),
+          el('p', { class: 'sub left' }, 'Run: tap RUN on touch, click the left stick on a controller, hold Shift on keyboard.'))),
       el('p', { class: 'sub left' }, 'Left thumb moves, right thumb aims and fires (legacy mode: a big FIRE button). USE, RELOAD and HEAL show up when they apply; hold NADE to switch throwables; ≡ has pause, bag, mine and flashlight.'));
   }
   open('settings', back, el('div', { class: 'panel wide' }, el('h2', {}, 'Settings'), tabs, body,

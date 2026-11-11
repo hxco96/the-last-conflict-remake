@@ -321,6 +321,8 @@ export class Input {
     add('grenade', extra.throwLabel || 'NADE', A.x - 30 * u, A.y - 112 * u, 30 * u, { hold: 'toggleThrowable', sub: extra.throwCount });
     if (extra.useLabel) add('interact', extra.useLabel, A.x + 72 * u, A.y - 112 * u, 30 * u, { accent: 'use' });
     if (extra.canHeal) add('heal', 'HEAL', m + 40 * u, move.y - R - 70 * u, 28 * u, { accent: extra.lowHp ? 'pulse' : null });
+    add('run', 'RUN', move.x + R + 46 * u, move.y - R - 14 * u, 28 * u, { accent: extra.runOn ? 'use' : null });
+    if (extra.callReady) add('callin', 'CALL', A.x - 100 * u, A.y - 100 * u, 26 * u, { accent: 'frenzy' });
     if (extra.frenzyReady) add('frenzy', 'FRENZY', W - m - 40 * u, H - m - 222 * u, 26 * u, { accent: 'frenzy' });
     // secondary actions behind the menu button (top-right)
     const mb = { x: W - m - 22 * u, y: m + 22 * u + (extra.topOffset || 0) };
@@ -391,7 +393,7 @@ export class Input {
     else if (padMove.mag) mv = padMove;
     else if (this.touch.move) mv = this.stickVec(this.touch.move);
     this.move = mv;
-    this.stickRun = S.stickRun && !(kx || ky) && mv.mag > 0.92;
+    this.stickRun = false; // auto-run at full tilt was removed: running is the RUN button / Shift / left-stick click
 
     // aim
     this.aimFire = false;
