@@ -285,7 +285,7 @@ function showMenu() {
     el('button', { class: 'pick' + (settings.legacy ? ' on' : ''), onclick: () => { settings.legacy = true; saveSettings(settings); showMenu(); } }, el('b', {}, 'Legacy auto-aim'), el('small', {}, 'auto-shoot the closest visible zed')));
   open('menu', null,
     el('div', { class: 'panel wide select' },
-      el('h1', {}, 'THE LAST CONFLICT'),
+      el('h1', {}, 'DEAD LINE'),
       el('p', { class: 'sub' }, `Choose your survivor and class · ${profile.coins} coins banked · ${profile.inventory.length} weapon${profile.inventory.length === 1 ? '' : 's'} carried · ${profile.storage.length} stored · best run ${Math.floor(profile.stats.best / 60)}m`),
       el('div', { class: 'select-grid' }, survivor, cards),
       el('h3', {}, 'Shooting mode'), mode,
@@ -306,7 +306,7 @@ function showReturning() {
   const info = CLASS_INFO[choice.cls] || { tag: '' }, c = CLASSES[choice.cls], look = LOOKS[choice.look];
   const perks = data.perks.filter((p) => c.perks.includes(p.value));
   open('menu', null, el('div', { class: 'panel wide select' },
-    el('h1', {}, 'THE LAST CONFLICT'),
+    el('h1', {}, 'DEAD LINE'),
     el('p', { class: 'sub' }, `${profile.coins} coins banked · ${profile.inventory.length} weapon${profile.inventory.length === 1 ? '' : 's'} carried · ${profile.storage.length} stored · best run ${Math.floor(profile.stats.best / 60)}m`),
     el('div', { class: 'returning' },
       previewCanvas(look, 144),
@@ -687,7 +687,7 @@ function showChange() {
     const g = S.lobby;
     if (g && g.player) {
       g.opts.cls = choice.cls; g.opts.look = S.look; g.cls = CLASSES[choice.cls]; g.perks = new Set(g.cls.perks);
-      g.female = /jill|claire/i.test(S.look.name); g.player.look = S.look; g.player.cls = choice.cls;
+      g.female = /mara|wren/i.test(S.look.name); g.player.look = S.look; g.player.cls = choice.cls;
     }
     if (S.coop) { S.coop.me.cls = choice.cls; S.coop.me.look = choice.look; }
     showChange();

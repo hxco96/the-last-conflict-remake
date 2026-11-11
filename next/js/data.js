@@ -32,6 +32,8 @@ function balance(items, upgrades) {
   }
 }
 
+const RENAMED = { Punisher: 'Enforcer', 'Samurai-Edge': 'Duelist', 'Miss-Betty': 'Lady-Luck' };
+
 export class GameData {
   constructor(assets) {
     const t = assets.tables;
@@ -44,6 +46,8 @@ export class GameData {
         this.itemsByName.set(norm(it.name), it);
       }
     }
+    // names taken from other franchises get original ones; old names still resolve (saves, scripts)
+    for (const [old, now] of Object.entries(RENAMED)) { const it = this.itemsByName.get(norm(old)); if (it) { it.name = now; this.itemsByName.set(norm(now), it); } }
     this.ammoCap = new Map(); // ammo kind id -> max carried
     for (const it of t.item_db) if (it._tag === 'ammo') this.ammoCap.set(it['sprite-id'], it['max-mag']);
     this.names = new Map(t.id_lookup.map(([id, name]) => [id, name]));
@@ -68,6 +72,7 @@ export class GameData {
         if (!this.icons.has(key) || /_default_/.test(fr.name)) this.icons.set(key, { ts, fr });
       }
     }
+    for (const [old, now] of Object.entries(RENAMED)) if (this.icons.has(norm(old))) this.icons.set(norm(now), this.icons.get(norm(old)));
   }
 
   item(nameOrId) {

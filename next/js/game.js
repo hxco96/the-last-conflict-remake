@@ -91,7 +91,7 @@ export class Game {
     this.tempLights = [];
     this.barkT = 8;
     this.cls = CLASSES[this.opts.cls];
-    this.female = /jill|claire/i.test(this.opts.look.name);
+    this.female = /mara|wren/i.test(this.opts.look.name);
     this.perks = new Set(this.cls.perks);
 
     const sp = this.pickSpawn();
