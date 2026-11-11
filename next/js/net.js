@@ -1,13 +1,13 @@
 // Online co-op transport. Star topology: the host is authoritative and every client talks only
 // to the host, which relays what other players need.
 // * WebRTC data channels via PeerJS (free public matchmaker + TURN, no account). Room codes are
-//   5 letters; the host's peer id is `tlcr-<code>`.
+//   5 letters; the host's peer id is `deadline-<code>`.
 // * `?net=local` swaps in a BroadcastChannel transport so several tabs of the same browser can
 //   play together (used for testing, works offline).
 import { BROKER, ICE_SERVERS } from './config.js';
 
 const PEERJS_URL = 'js/vendor/peerjs.min.js'; // PeerJS 1.5.4 (MIT), vendored so it works without a CDN
-const PREFIX = 'tlcr-remake-';
+const PREFIX = 'deadline-';
 export const MAX_PLAYERS = 4;
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // no I/O: easy to read out loud
 
@@ -70,7 +70,7 @@ class LocalPeer {
     this.id = id || 'p' + Math.random().toString(36).slice(2, 9);
     this.handlers = {};
     this.conns = new Map();
-    this.bc = new BroadcastChannel('tlcr-net');
+    this.bc = new BroadcastChannel('deadline-net');
     this.bc.onmessage = (e) => this.route(e.data);
     setTimeout(() => this.emit('open', this.id), 0);
   }

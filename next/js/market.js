@@ -9,7 +9,7 @@ import { modName, modColor, parseMod } from './mods.js';
 
 const URL_ = 'https://wzalddznikqhfxgtemkx.supabase.co';
 const KEY = 'sb_publishable_zP_P3VajrkGcCNjzCXoDNQ_5MLU9Cff'; // publishable key: safe in the client
-const AUTH = 'tlcr-auth-v1';
+const AUTH = 'deadline-auth-v1';
 
 // ---------- auth (anonymous account, upgradable to email later) ----------
 let session = null;

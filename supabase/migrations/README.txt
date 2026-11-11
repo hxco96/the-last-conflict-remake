@@ -1,1 +1,1 @@
--- Applied to Supabase project tlcr-game (wzalddznikqhfxgtemkx) as migration market_v1. See next/js/market.js for the client.
+-- Applied to the game's Supabase project (ref wzalddznikqhfxgtemkx) as migration market_v1. See next/js/market.js for the client.
