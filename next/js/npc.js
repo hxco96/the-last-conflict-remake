@@ -59,12 +59,16 @@ export class NPC extends Player {
   say(list) { if (list && list.length) this.bark = { text: list[Math.floor(Math.random() * list.length)], t: 2.6 }; }
 }
 
+const SURVIVOR_CARRY = ['baseball-bat', 'crowbar', 'wrench', 'steel-pipe', 'machete', 'Knife', 'shovel', 'fire-axe'];
+
 export function spawnNPC(game, kind, x, y) {
   const look = randomLook(kind, game.atlas.core);
   const names = look.female ? game.assets.barks.names_f : game.assets.barks.names_m;
   const name = names && names.length ? names[Math.floor(Math.random() * Math.min(names.length, 200))] : kind;
   const weapon = kind === 'soldier' ? game.data.item(pick(SOLDIER_GUNS)) : null;
   const n = new NPC(x, y, kind, { name, ...look }, name, weapon);
+  // unarmed survivors still carry something in hand (drawn only; their behaviour is unchanged)
+  if (!weapon) n.carry = game.data.item(pick(SURVIVOR_CARRY));
   n.homeX = x; n.homeY = y;
   game.npcs.push(n);
   return n;

@@ -572,7 +572,7 @@ export class Game {
       // the host applies the damage; show the hit right away
       m.hp -= d; m.flash = 0.08; m.localHitT = 0.3;
       if (stunned) this.fx.spawn('stun', m.x, m.cy - 12);
-      if (Math.random() < 0.12) this.bloodDecal(m.x + (Math.random() - 0.5) * 10, m.y - 2, 0.5);
+      this.hitSplatter(m, src);
       this.coop.sendHit(m, d, src, stunned);
       return;
     }
@@ -586,7 +586,7 @@ export class Game {
     if (stunned) { m.stun = 0.8; this.fx.spawn('stun', m.x, m.cy - 12); }
     const a = src.ang ?? Math.atan2(src.vy || 0, src.vx || 0);
     if (!m.boss) m.move(this.map, Math.cos(a) * (src.melee ? 5 : 1.5), Math.sin(a) * (src.melee ? 5 : 1.5));
-    if (Math.random() < 0.12) this.bloodDecal(m.x + (Math.random() - 0.5) * 10, m.y - 2, 0.5);
+    this.hitSplatter(m, src);
     if (m.hp <= 0) this.killMob(m, src);
     else if (Math.random() < 0.3) play.mob('pain', m.def.name, m.x, m.y);
   }
@@ -627,12 +627,30 @@ export class Game {
     if (m.boss) for (let i = 0; i < 3; i++) { const g = this.rollLoot(2, true); if (g) this.pickups.push(this.makePickup(g.name, m.x + i * 12 - 12, m.y, null, null, true)); }
   }
 
+  // Blood on every gun or melee hit: a spray at the wound and drops on the floor behind the target,
+  // thrown along the direction of the hit (heavier for melee). Limited per frame so a shotgun or a
+  // horde doesn't flood the floor canvas.
+  hitSplatter(m, src = {}) {
+    if (this.input && this.input.settings.gore === false) return;
+    const a = src.ang ?? Math.atan2(src.vy || 0, src.vx || 0), ca = Math.cos(a), sa = Math.sin(a);
+    if (src.melee) this.fx.spawn('blood-explode', m.x + ca * 4, m.cy + sa * 4, { scale: 0.55, rot: a });
+    const now = this.time || 0;
+    if (now - (this.splatT || 0) < 0.03) return;
+    this.splatT = now;
+    const n = src.melee ? 3 : 1 + (Math.random() < 0.5 ? 1 : 0);
+    for (let i = 0; i < n; i++) {
+      const d = 6 + Math.random() * (src.melee ? 22 : 16);
+      this.bloodDecal(m.x + ca * d + (Math.random() - 0.5) * 6, m.y - 2 + sa * d * 0.8, 0.25 + Math.random() * 0.25);
+    }
+  }
+
   bloodDecal(x, y, scale) {
     if (this.hasPerk('Sanitation') || this.opts.lobby) return;
     const a = this.atlas.infected;
     const n = Math.floor(Math.random() * 7);
     const found = a.find('bpuddle-' + n, ['default', 'walk', 'death'], ['x', 's', 'e']);
     const ctx = this.map.bot.getContext('2d');
+    this.map.botDirty = true;
     if (found) {
       ctx.globalAlpha = 0.55;
       a.drawCentered(ctx, found.list[0].f, x, y, scale, Math.floor(Math.random() * 4) * Math.PI / 2);
@@ -1543,12 +1561,13 @@ export class Game {
     const list = [];
     for (const d of map.doors) if (inView(d.x, d.y)) list.push([d.y + 30, () => map.drawDynamic(ctx, d)]);
     for (const c of map.cades) if (inView(c.x, c.y)) list.push([c.y + 30, () => map.drawDynamic(ctx, c)]);
+    for (const u of map.uprights) if (inView(u.x + u.w / 2, u.y + u.h, 96)) list.push([u.y + u.h - 6, () => map.drawTile(ctx, u.r, u.x, u.y, u.w, u.h)]);
     for (const p of this.pickups) if (inView(p.x, p.y)) list.push([p.y, () => this.drawPickup(ctx, p)]);
     for (const m of this.mobs) if (inView(m.x, m.y)) list.push([m.alive ? m.y : m.y - 40, () => { if (m.elite && m.alive) this.dir.drawElite(ctx, m); m.draw(ctx, this.atlas.infected, perf.lite); }]);
     if (!this.ghost) list.push([pl.y, () => pl.draw(ctx, this.atlas.core, () => this.drawHeldWeapon(ctx))]);
     if (this.ext && this.ext.drawables) this.ext.drawables(list, ctx);
     if (this.coop) this.coop.drawAvatars(this, list, ctx, inView);
-    for (const n of this.npcs) if (inView(n.x, n.y)) list.push([n.alive ? n.y : n.y - 30, () => n.draw(ctx, this.atlas.core, n.weapon ? () => this.drawWeapon(ctx, n, n.weapon, n.recoilT > 0, n.flashT > 0) : null)]);
+    for (const n of this.npcs) if (inView(n.x, n.y)) list.push([n.alive ? n.y : n.y - 30, () => n.draw(ctx, this.atlas.core, n.weapon || n.carry ? () => this.drawWeapon(ctx, n, n.weapon || n.carry, n.recoilT > 0, n.flashT > 0) : null)]);
     list.sort((a, b) => a[0] - b[0]);
     for (const [, f] of list) f();
 
@@ -1608,18 +1627,18 @@ export class Game {
     for (const p of this.pickups) if (inView(p.x, p.y)) v3.billboard({ key: p, x: p.x, y: p.y + 12, size: 48, shadow: false, draw: (c) => this.drawPickup(c, p) });
     for (const m of this.mobs) {
       if (!inView(m.x, m.y)) continue;
-      const size = m.boss || m.radius >= 14 ? 160 : 72;
+      const size = m.boss || m.radius >= 14 ? 160 : 96;
       v3.billboard({ key: m, x: m.x, y: m.y, size, shadow: m.alive, draw: (c) => { if (m.elite && m.alive) this.dir.drawElite(c, m); m.draw(c, this.atlas.infected, perf.lite); } });
     }
     if (!this.ghost) v3.billboard({ key: pl, x: pl.x, y: pl.y, draw: (c) => pl.draw(c, this.atlas.core, () => this.drawHeldWeapon(c)) });
-    for (const n of this.npcs) if (inView(n.x, n.y)) v3.billboard({ key: n, x: n.x, y: n.y, shadow: n.alive, draw: (c) => n.draw(c, this.atlas.core, n.weapon ? () => this.drawWeapon(c, n, n.weapon, n.recoilT > 0, n.flashT > 0) : null) });
+    for (const n of this.npcs) if (inView(n.x, n.y)) v3.billboard({ key: n, x: n.x, y: n.y, shadow: n.alive, draw: (c) => n.draw(c, this.atlas.core, n.weapon || n.carry ? () => this.drawWeapon(c, n, n.weapon || n.carry, n.recoilT > 0, n.flashT > 0) : null) });
     // mode and co-op extras: entries carrying an x become billboards, the rest go on the flat layer
     const flat = [], extra = [];
     if (this.ext && this.ext.drawables) this.ext.drawables(extra, ctx);
     if (this.coop) this.coop.drawAvatars(this, extra, ctx, inView);
     for (const e of extra) {
       if (e[2] === undefined) { flat.push(e); continue; }
-      v3.billboard({ key: e[3] || e, x: e[2], y: e[0], size: e[4] || 64, draw: e[5] || e[1] });
+      v3.billboard({ key: e[3] || e, x: e[2], y: e[0], size: e[4] || 96, draw: e[5] || e[1] });
     }
     v3.end();
 
@@ -1704,7 +1723,8 @@ export class Game {
     const ca = Math.cos(ent.aim), sa = Math.sin(ent.aim);
     const south = sa > 0.7071, north = sa < -0.7071;
     // pivot: where the hand sits relative to the feet for each facing
-    const px = ent.x + (south ? -3 : north ? 3 : 0), py = ent.y - (south ? 12 : north ? 17 : 15);
+    // facing away the weapon is carried at the near (right) shoulder so it never vanishes behind the body
+    const px = ent.x + (south ? -3 : north ? 6 : 0), py = ent.y - (south ? 12 : north ? 15 : 15);
     ctx.save();
     ctx.translate(px, py);
     ctx.rotate(ent.aim);

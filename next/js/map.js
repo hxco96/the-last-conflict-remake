@@ -39,6 +39,8 @@ export class GameMap {
     this.low = new Uint8Array(n);       // static but low enough to jump over (fences)
     this.shotBlock = new Uint8Array(n); // static: blocks bullets
     this.dyn = new Array(n).fill(null); // door / barricade occupying a cell
+    this.solids = [];    // solid objects the 3D view raises as trimmed boxes
+    this.uprights = []; // trees, street lights and other standing art, drawn upright (not baked into the floor)
     this.doors = [];
     this.cades = [];
     this.pickups = [];
@@ -146,8 +148,9 @@ export class GameMap {
         const dy = (cy + 1) * T - r.ts.th;
         if (this.clean && /^(deco_gore|deco_trash|deco_cracks|police_tape|hazards_|1destroyed)/.test(r.set)) continue;
         if (!isTop && this.dynamicTile(r, cx, cy)) continue;
-        this.drawTile(ctx, r, dx, dy);
-        if (!isTop) this.applyStatic(r, cx, cy);
+        if (!isTop && GameMap.isUpright(r)) this.uprights.push({ r, x: dx, y: dy, w: r.ts.tw, h: r.ts.th });
+        else this.drawTile(ctx, r, dx, dy);
+        if (!isTop) this.applyStatic(r, cx, cy, dx, dy);
       }
     }
 
@@ -157,9 +160,16 @@ export class GameMap {
     for (const o of objs) this.addObject(o, bctx);
   }
 
-  applyStatic(r, cx, cy) {
+  // Standing art (drawn in side view): trees, street lights and tiles taller than they are wide.
+  static isUpright(r, type = r.meta.type || '') {
+    if (type === 'Tree' || type === 'StreetLight') return true;
+    return r.ts.th > T && r.ts.th > r.ts.tw && type !== 'Car' && !/^(Door|Cade|HeavyCade|Fence|Shutter|Boarded|Wall)/.test(type) && !SOLID_SETS.has(r.set);
+  }
+
+  applyStatic(r, cx, cy, dx = cx * T, dy = cy * T) {
     const type = r.meta.type || '';
     const i = this.idx(cx, cy);
+    if ((type === 'Obstruction' || type === 'Car' || /^Fence_/.test(type)) && !GameMap.isUpright(r)) this.solids.push({ r, x: dx, y: dy, w: r.ts.tw, h: r.ts.th, type, cell: i });
     if (/^Fence_/.test(type)) this.low[i] = 1;
     if (type === 'Window') this.breach[i] = 1;
     if (SOLID_TYPES.has(type) || SOLID_SETS.has(r.set) || /^Fence_/.test(type)) {
@@ -232,7 +242,9 @@ export class GameMap {
       this.pickups.push({ x: x + w / 2, y: y + h / 2, name: this.itemNameFor(r) || 'Boards', tile: r, amount: null });
       return;
     }
-    this.drawTile(ctx, r, x, y, w, h);
+    if (GameMap.isUpright(r, tType)) this.uprights.push({ r, x, y, w, h });
+    else this.drawTile(ctx, r, x, y, w, h);
+    if ((tType === 'Obstruction' || tType === 'Car') && !GameMap.isUpright(r, tType) && this.inBounds(cx, cy)) this.solids.push({ r, x, y, w, h, type: tType, cell: this.idx(cx, cy) });
     if (tType === 'Candle' || tType === 'LightBulb' || tType === 'StreetLight') this.addLight(tType, x + w / 2, y + h / 2);
     if (tType === 'Window' && this.inBounds(cx, cy)) this.breach[this.idx(cx, cy)] = 1;
     if (SOLID_TYPES.has(tType) && this.inBounds(cx, cy)) {

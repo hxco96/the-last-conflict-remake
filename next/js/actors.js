@@ -95,17 +95,15 @@ export class Player {
       ? (this.hp < this.maxHp * 0.35 ? ['hurtwalk', 'walk'] : this.running ? ['run', 'walk'] : ['walk'])
       : (this.tired ? ['tiredidle', 'drawn'] : this.hp < this.maxHp * 0.35 ? ['hurtidle', 'drawn'] : ['drawn', 'blink']);
     const dir = this.alive ? this.dir : 'n';
-    const behind = this.dir === 'n';
     const lift = this.jumpH;
     const wd = weaponDraw && (() => { ctx.save(); ctx.translate(0, -lift); weaponDraw(); ctx.restore(); });
-    if (behind && wd) wd();
     const tint = this.hurtT > 0;
     if (tint) ctx.filter = 'brightness(1.8) sepia(1) hue-rotate(-50deg) saturate(4)';
     const h = this.jumpH;
     if (h) { ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(this.x, this.y - 1, 6 - h * 0.2, 2.5, 0, 0, 7); ctx.fill(); }
     drawLayers(ctx, atlas, this.look.layers, h ? ['run', 'walk'] : anims, dir, this.animT, this.x, this.y - h);
     if (tint) ctx.filter = 'none';
-    if (!behind && wd && this.alive) wd();
+    if (wd && this.alive) wd();
   }
 }
 

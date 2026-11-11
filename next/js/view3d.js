@@ -1,8 +1,8 @@
-// 3D view for the preview build: three.js draws the map as a floor plus extruded walls and every
-// character as an upright, camera-facing billboard painted by the existing 2D draw code.
-// The simulation stays in 2D pixel coordinates; world.x = x / T, world.z = y / T, y is up.
-// Everything flat (effects, projectiles, decals of modes, lighting, HUD) stays on the 2D canvas
-// above, drawn through an affine world-to-screen transform taken from this camera (see xform()).
+// 3D view for the preview build: three.js draws the map as a floor plus raised walls, objects fitted
+// to their art, upright trees and props, and every character as an upright billboard painted by the
+// existing 2D draw code. The simulation stays in 2D pixel coordinates; world.x = x / T, world.z = y / T.
+// Everything flat (effects, decals of modes, lighting, HUD) stays on the 2D canvas above, drawn through
+// an affine world-to-screen transform taken from this camera (see xform()).
 import * as THREE from './vendor/three.module.js';
 import { T } from './map.js';
 
@@ -10,6 +10,11 @@ const WALL_H = 1.25;      // short walls: nothing hides the player
 const PITCH = (56 * Math.PI) / 180;
 const FOV = 35;
 const PAD = 8;            // pixels under an actor's feet inside its billboard canvas
+const K = 1 / Math.cos(PITCH); // upright art is stretched by this so it reads 1:1 from the tilted camera
+
+const PROP_H = { Car: 0.6, Obstruction: 0.5 };
+const CADE_H = { Cade: 0.75, HeavyCade: 0.95, Fence: 0.85, Shutter: 1.15, Boarded: 0.9 };
+const cadeStage = (c) => (c.hp <= 0 ? 4 : Math.min(3, Math.floor((1 - c.hp / c.maxHp) * 4)));
 
 export function webglOk() {
   try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch { return false; }
@@ -24,24 +29,69 @@ function tex(canvas, mips = false) {
   return t;
 }
 
-// Height of each cell from what the simulation already knows (solid, shot-blocking, doors, barricades).
+// Opaque bounding box and average colour of a tile, so each object gets a box that fits its art.
+const infoCache = new Map();
+let infoCanvas = null;
+function tileInfo(map, r, lid = r.lid) {
+  const key = `${r.set}|${lid}|${+r.h}${+r.v}${+r.d}`;
+  if (infoCache.has(key)) return infoCache.get(key);
+  const tw = r.ts.tw, th = r.ts.th;
+  infoCanvas = infoCanvas || document.createElement('canvas');
+  infoCanvas.width = tw; infoCanvas.height = th;
+  const c = infoCanvas.getContext('2d', { willReadFrequently: true });
+  c.clearRect(0, 0, tw, th);
+  map.drawTile(c, r, 0, 0, 0, 0, lid);
+  const d = c.getImageData(0, 0, tw, th).data;
+  let x0 = tw, y0 = th, x1 = -1, y1 = -1, n = 0, R = 0, G = 0, B = 0;
+  for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) {
+    const i = (y * tw + x) * 4;
+    if (d[i + 3] < 60) continue;
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    R += d[i]; G += d[i + 1]; B += d[i + 2]; n++;
+  }
+  const lin = (v) => Math.pow(v / n / 255, 2.2) * 0.55; // linear, darkened for the side faces
+  const info = n ? { x0: x0 / tw, y0: y0 / th, x1: (x1 + 1) / tw, y1: (y1 + 1) / th, col: [lin(R), lin(G), lin(B)] } : null;
+  infoCache.set(key, info);
+  return info;
+}
+
+// Triangle soup builder.
+class Buf {
+  constructor() { this.pos = []; this.nor = []; this.uv = []; this.col = []; }
+  quad(a, b, c, d, n, uvs, col) {
+    const P = [a, b, c, a, c, d], Q = uvs ? [uvs[0], uvs[1], uvs[2], uvs[0], uvs[2], uvs[3]] : null;
+    for (let i = 0; i < 6; i++) {
+      this.pos.push(P[i][0], P[i][1], P[i][2]); this.nor.push(n[0], n[1], n[2]);
+      if (Q) this.uv.push(Q[i][0], Q[i][1]);
+      if (col) this.col.push(col[0], col[1], col[2]);
+    }
+  }
+  geometry() {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
+    if (this.uv.length) g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
+    if (this.col.length) g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    return g;
+  }
+}
+
+// Height of each wall cell. Objects, doors, barricades and standing art are built separately.
 function cellHeights(map) {
   const types = new Array(map.w * map.h).fill('');
   for (const layer of map.floor().layers || []) {
     if (layer.type !== 'tilelayer' || !layer.data || layer.name.startsWith('top_') || layer.name === 'markers') continue;
     for (let i = 0; i < layer.data.length; i++) { const r = map.resolve(layer.data[i]); if (r && r.meta.type) types[i] = r.meta.type; }
   }
+  const skip = new Uint8Array(map.w * map.h);
+  for (const p of map.solids) skip[p.cell] = 1;
   const H = new Float32Array(map.w * map.h);
   for (let i = 0; i < H.length; i++) {
-    const d = map.dyn[i], t = types[i];
-    if (d && d.kind === 'door') H[i] = d.open ? 0 : WALL_H * 0.95;
-    else if (d && d.kind === 'cade') H[i] = d.hp > 0 ? 0.25 + 0.4 * (d.hp / d.maxHp) : 0;
-    else if (!map.solid[i]) H[i] = 0;
-    else if (t === 'Tree') H[i] = 1.1;
+    const t = types[i];
+    if (map.dyn[i] || skip[i] || !map.solid[i] || t === 'Tree' || t === 'StreetLight' || t === 'VoidAll') H[i] = 0;
     else if (t === 'Window') H[i] = 0.4;
-    else if (/^Fence_/.test(t)) H[i] = 0.6;
     else if (map.shotBlock[i]) H[i] = WALL_H;
-    else H[i] = 0.5; // obstructions, cars, furniture
+    else H[i] = 0.5;
   }
   return H;
 }
@@ -49,7 +99,7 @@ function cellHeights(map) {
 function dynSignature(map) {
   let s = '';
   for (const d of map.doors) s += d.open ? '1' : '0';
-  for (const c of map.cades) s += c.hp <= 0 ? 4 : Math.min(3, Math.floor((1 - c.hp / c.maxHp) * 4));
+  for (const c of map.cades) s += cadeStage(c);
   return s;
 }
 
@@ -69,6 +119,8 @@ export class View3D {
     this.sigT = 0;
     this.groundT = 0;
     this.sprites = new Map(); // key object -> billboard
+    this.geos = new Map();    // billboard size -> shared geometry
+    this.pageTex = new Map(); // tile page image -> texture
     this.frame = 0;
     this.v = new THREE.Vector3();
     this.ray = new THREE.Raycaster();
@@ -76,16 +128,13 @@ export class View3D {
     this.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.hit = new THREE.Vector3();
     this.w = 0; this.h = 0;
-    this.blob = this.makeBlob();
-  }
-
-  makeBlob() {
     const c = document.createElement('canvas'); c.width = c.height = 32;
     const x = c.getContext('2d'), g = x.createRadialGradient(16, 16, 0, 16, 16, 16);
     g.addColorStop(0, 'rgba(0,0,0,0.55)'); g.addColorStop(1, 'rgba(0,0,0,0)');
     x.fillStyle = g; x.fillRect(0, 0, 32, 32);
-    const geo = new THREE.PlaneGeometry(0.8, 0.5); geo.rotateX(-Math.PI / 2);
-    return { geo, mat: new THREE.MeshBasicMaterial({ map: tex(c), transparent: true, depthWrite: false }) };
+    this.blobMat = new THREE.MeshBasicMaterial({ map: tex(c), transparent: true, depthWrite: false });
+    this.blobGeo = new THREE.PlaneGeometry(0.8, 0.5); this.blobGeo.rotateX(-Math.PI / 2);
+    this.sideMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   }
 
   resize(w, h) {
@@ -99,62 +148,134 @@ export class View3D {
   // ---------- level ----------
   setMap(map) {
     if (this.level) {
-      this.scene.remove(this.level.ground, this.level.walls);
-      this.level.ground.geometry.dispose(); this.level.walls.geometry.dispose();
+      for (const m of this.level.meshes) { this.scene.remove(m); m.geometry.dispose(); }
       this.level.groundTex.dispose(); this.level.wallTex.dispose();
     }
     for (const b of this.sprites.values()) this.dropSprite(b);
     this.sprites.clear();
     this.map = map;
+    const { w, h, pw, ph } = map;
     const groundTex = tex(map.bot, true);
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(map.w, map.h), new THREE.MeshLambertMaterial({ map: groundTex }));
-    ground.rotation.x = -Math.PI / 2; ground.position.set(map.w / 2, 0, map.h / 2);
-    this.wallCanvas = document.createElement('canvas'); this.wallCanvas.width = map.pw; this.wallCanvas.height = map.ph;
-    const wallTex = tex(this.wallCanvas, true);
-    const walls = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshLambertMaterial({ map: wallTex }));
-    this.level = { ground, walls, groundTex, wallTex };
-    this.scene.add(ground, walls);
-    this.rebuildWalls();
-  }
-
-  rebuildWalls() {
-    const map = this.map, { w, h, pw, ph } = map;
-    const f = this.wallCanvas.getContext('2d');
-    f.clearRect(0, 0, pw, ph);
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshLambertMaterial({ map: groundTex }));
+    ground.rotation.x = -Math.PI / 2; ground.position.set(w / 2, 0, h / 2);
+    // one canvas for every raised face: floor + doors/barricades as they are now + the over-actor layer
+    const wc = this.wallCanvas = document.createElement('canvas'); wc.width = pw; wc.height = ph;
+    const f = wc.getContext('2d');
     f.drawImage(map.bot, 0, 0);
-    for (const d of map.doors) map.drawDynamic(f, { ...d, open: false });
+    for (const d of map.doors) map.drawDynamic(f, d);
     for (const c of map.cades) map.drawDynamic(f, { ...c, hit: 0 });
     f.drawImage(map.top, 0, 0);
-    this.level.wallTex.needsUpdate = true;
+    const wallTex = tex(wc, true);
+    this.wallMat = new THREE.MeshLambertMaterial({ map: wallTex });
+    this.level = { groundTex, wallTex, meshes: [ground], dyn: [] };
+    this.scene.add(ground);
+    this.buildStatic();
+    this.buildDynamic(false);
+  }
 
+  add(mesh, list = this.level.meshes) {
+    this.scene.add(mesh);
+    list.push(mesh);
+    if (list !== this.level.meshes) this.level.meshes.push(mesh);
+    return mesh;
+  }
+
+  // A box over a rectangle of the wall canvas: its art on top, flat-coloured sides.
+  box(tb, cb, px0, py0, px1, py1, h, col) {
+    const { pw, ph } = this.map;
+    const x0 = px0 / T, x1 = px1 / T, z0 = py0 / T, z1 = py1 / T;
+    const u0 = px0 / pw, u1 = px1 / pw, vt = 1 - py0 / ph, vb = 1 - py1 / ph;
+    tb.quad([x0, h, z0], [x0, h, z1], [x1, h, z1], [x1, h, z0], [0, 1, 0], [[u0, vt], [u0, vb], [u1, vb], [u1, vt]]);
+    if (h < 0.06) return;
+    const side = (a, b, n) => cb.quad([a[0], h, a[1]], [a[0], 0, a[1]], [b[0], 0, b[1]], [b[0], h, b[1]], n, null, col);
+    side([x0, z1], [x1, z1], [0, 0, 1]);
+    side([x1, z0], [x0, z0], [0, 0, -1]);
+    side([x1, z1], [x1, z0], [1, 0, 0]);
+    side([x0, z0], [x0, z1], [-1, 0, 0]);
+  }
+
+  buildStatic() {
+    const map = this.map, { w, h, pw, ph } = map;
     const H = this.heights = cellHeights(map);
-    const pos = [], nor = [], uv = [];
+    const tb = new Buf(), cb = new Buf();
     const U = (x) => (x * T) / pw, V = (z) => 1 - (z * T) / ph;
-    const quad = (a, b, c, d, n, ua, ub, uc, ud) => {
-      for (const [p, q] of [[a, ua], [b, ub], [c, uc], [a, ua], [c, uc], [d, ud]]) { pos.push(p[0], p[1], p[2]); nor.push(n[0], n[1], n[2]); uv.push(q[0], q[1]); }
-    };
     const hAt = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : H[y * w + x]);
     for (let cy = 0; cy < h; cy++) for (let cx = 0; cx < w; cx++) {
       const top = H[cy * w + cx];
       if (!top) continue;
       const x0 = cx, x1 = cx + 1, z0 = cy, z1 = cy + 1;
-      const u0 = U(x0), u1 = U(x1), vt = V(z0), vb = V(z1);
-      quad([x0, top, z0], [x0, top, z1], [x1, top, z1], [x1, top, z0], [0, 1, 0], [u0, vt], [u0, vb], [u1, vb], [u1, vt]);
-      const side = (nh, a, b, n) => {
-        if (nh >= top) return;
-        quad([a[0], top, a[1]], [a[0], nh, a[1]], [b[0], nh, b[1]], [b[0], top, b[1]], n, [u0, vt], [u0, vb], [u1, vb], [u1, vt]);
-      };
+      const uvs = [[U(x0), V(z0)], [U(x0), V(z1)], [U(x1), V(z1)], [U(x1), V(z0)]];
+      tb.quad([x0, top, z0], [x0, top, z1], [x1, top, z1], [x1, top, z0], [0, 1, 0], uvs);
+      const side = (nh, a, b, n) => { if (nh < top) tb.quad([a[0], top, a[1]], [a[0], nh, a[1]], [b[0], nh, b[1]], [b[0], top, b[1]], n, uvs); };
       side(hAt(cx, cy + 1), [x0, z1], [x1, z1], [0, 0, 1]);
       side(hAt(cx, cy - 1), [x1, z0], [x0, z0], [0, 0, -1]);
       side(hAt(cx + 1, cy), [x1, z1], [x1, z0], [1, 0, 0]);
       side(hAt(cx - 1, cy), [x0, z0], [x0, z1], [-1, 0, 0]);
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-    this.level.walls.geometry.dispose();
-    this.level.walls.geometry = geo;
+    // objects (crates, furniture, cars, gravestones): a box trimmed to the opaque part of the tile
+    for (const p of map.solids) {
+      const i = tileInfo(map, p.r);
+      if (!i) continue;
+      this.box(tb, cb, p.x + i.x0 * p.w, p.y + i.y0 * p.h, p.x + i.x1 * p.w, p.y + i.y1 * p.h, PROP_H[p.type] || 0.7, i.col);
+    }
+    this.add(new THREE.Mesh(tb.geometry(), this.wallMat));
+    if (cb.pos.length) this.add(new THREE.Mesh(cb.geometry(), this.sideMat));
+
+    // standing art (trees, street lights, tall props): upright cut-outs from the tile pages + a shadow
+    const pages = new Map(), sb = new Buf();
+    for (const u of map.uprights) {
+      const i = tileInfo(map, u.r);
+      if (!i) continue;
+      const img = map.assets.tilePages[u.r.ts.atlas.page];
+      if (!pages.has(img)) pages.set(img, new Buf());
+      const [sx, sy, sw, sh] = map.tileSrc(u.r.ts, u.r.lid);
+      let ua = sx / img.width, ub = (sx + sw) / img.width;
+      if (u.r.h) [ua, ub] = [ub, ua];
+      const va = 1 - sy / img.height, vb = 1 - (sy + sh) / img.height;
+      const xa = u.x / T, xb = (u.x + u.w) / T, z = (u.y + u.h * i.y1) / T - 0.08;
+      const yb = -((u.h * (1 - i.y1)) / T) * K, yt = yb + (u.h / T) * K;
+      pages.get(img).quad([xa, yt, z], [xa, yb, z], [xb, yb, z], [xb, yt, z], [0, 0, 1], [[ua, va], [ua, vb], [ub, vb], [ub, va]]);
+      const mx = (u.x + (u.w * (i.x0 + i.x1)) / 2) / T, r = Math.max(0.35, ((u.w * (i.x1 - i.x0)) / T) * 0.4);
+      sb.quad([mx - r, 0.012, z - r * 0.5], [mx - r, 0.012, z + r * 0.5], [mx + r, 0.012, z + r * 0.5], [mx + r, 0.012, z - r * 0.5], [0, 1, 0], [[0, 1], [0, 0], [1, 0], [1, 1]]);
+    }
+    for (const [img, buf] of pages) {
+      let t = this.pageTex.get(img);
+      if (!t) {
+        t = new THREE.Texture(img); t.colorSpace = THREE.SRGBColorSpace;
+        t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true;
+        this.pageTex.set(img, t);
+      }
+      this.add(new THREE.Mesh(buf.geometry(), new THREE.MeshBasicMaterial({ map: t, alphaTest: 0.5, side: THREE.DoubleSide })));
+    }
+    if (sb.pos.length) this.add(new THREE.Mesh(sb.geometry(), this.blobMat));
+  }
+
+  // Doors and barricades as slabs fitted to their art; rebuilt when one opens, closes or loses a stage.
+  buildDynamic(redraw = true) {
+    const map = this.map, L = this.level;
+    for (const m of L.dyn) { this.scene.remove(m); m.geometry.dispose(); L.meshes.splice(L.meshes.indexOf(m), 1); }
+    L.dyn = [];
+    const f = this.wallCanvas.getContext('2d'), tb = new Buf(), cb = new Buf();
+    const each = (e, lid, hgt) => {
+      const tw = e.r.ts.tw, th = e.r.ts.th;
+      if (redraw) {
+        f.clearRect(e.x, e.y, tw, th);
+        f.drawImage(map.bot, e.x, e.y, tw, th, e.x, e.y, tw, th);
+        map.drawDynamic(f, { ...e, hit: 0 });
+        f.drawImage(map.top, e.x, e.y, tw, th, e.x, e.y, tw, th);
+      }
+      const i = lid === null ? null : tileInfo(map, e.r, lid);
+      if (i) this.box(tb, cb, e.x + i.x0 * tw, e.y + i.y0 * th, e.x + i.x1 * tw, e.y + i.y1 * th, hgt, i.col);
+    };
+    for (const d of map.doors) each(d, d.open ? d.openLid : d.closedLid, d.open ? 0.03 : WALL_H * 0.92);
+    for (const c of map.cades) {
+      const st = cadeStage(c), base = CADE_H[c.type] || 0.75;
+      if (c.type === 'Boarded') each(c, c.hp > 0 ? c.r.lid : null, base);
+      else each(c, c.baseLid + st, st >= 4 ? 0.03 : base * (1 - st * 0.18));
+    }
+    if (redraw) L.wallTex.needsUpdate = true;
+    if (tb.pos.length) this.add(new THREE.Mesh(tb.geometry(), this.wallMat), L.dyn);
+    if (cb.pos.length) this.add(new THREE.Mesh(cb.geometry(), this.sideMat), L.dyn);
     this.sig = dynSignature(map);
   }
 
@@ -170,7 +291,7 @@ export class View3D {
 
   // world pixels (x, y) at height hpx world pixels -> screen pixels
   toScreen(x, y, hpx = 0) {
-    const v = this.v.set(x / T, hpx / T, y / T).project(this.camera);
+    const v = this.v.set(x / T, (hpx / T) * K, y / T).project(this.camera);
     return { x: (v.x + 1) * 0.5 * this.w, y: (1 - v.y) * 0.5 * this.h };
   }
 
@@ -201,6 +322,8 @@ export class View3D {
   }
 
   // ---------- billboards ----------
+  // Characters stand upright on the ground (so they never lean into the wall behind them) and are
+  // stretched by K, which makes them read exactly as drawn from the tilted camera.
   sprite(key, size) {
     let b = this.sprites.get(key);
     if (b && b.size !== size) { this.dropSprite(b); b = null; }
@@ -208,10 +331,14 @@ export class View3D {
       const c = document.createElement('canvas'); c.width = c.height = size;
       const ctx = c.getContext('2d'); ctx.imageSmoothingEnabled = false;
       const t = tex(c);
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, alphaTest: 0.4 }));
-      s.center.set(0.5, PAD / size);
-      s.scale.set(size / T, size / T, 1);
-      const shadow = new THREE.Mesh(this.blob.geo, this.blob.mat);
+      let geo = this.geos.get(size);
+      if (!geo) {
+        geo = new THREE.PlaneGeometry(size / T, (size / T) * K);
+        geo.translate(0, ((size / 2 - PAD) / T) * K, 0);
+        this.geos.set(size, geo);
+      }
+      const s = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: t, alphaTest: 0.4 }));
+      const shadow = new THREE.Mesh(this.blobGeo, this.blobMat);
       this.scene.add(s, shadow);
       b = { s, shadow, c, ctx, t, size, seen: 0 };
       this.sprites.set(key, b);
@@ -226,7 +353,7 @@ export class View3D {
 
   // entry: { x, y, draw(ctx), key, size?, shadow? }
   billboard(e) {
-    const size = e.size || 64;
+    const size = e.size || 96;
     const b = this.sprite(e.key, size);
     b.seen = this.frame;
     const { ctx, c } = b;
@@ -236,9 +363,9 @@ export class View3D {
     ctx.save(); e.draw(ctx); ctx.restore();
     b.t.needsUpdate = true;
     b.s.visible = true;
-    b.s.position.set(e.x / T, 0, e.y / T + 0.02);
+    b.s.position.set(e.x / T, 0, e.y / T);
     b.shadow.visible = e.shadow !== false;
-    b.shadow.position.set(e.x / T, 0.01, e.y / T);
+    b.shadow.position.set(e.x / T, 0.012, e.y / T);
   }
 
   // ---------- frame ----------
@@ -248,11 +375,11 @@ export class View3D {
     this.sigT -= dt;
     if (this.sigT <= 0) {
       this.sigT = 0.2;
-      const s = dynSignature(map);
-      if (s !== this.sig) this.rebuildWalls();
+      if (dynSignature(map) !== this.sig) this.buildDynamic();
     }
     this.groundT -= dt;
-    if (this.groundT <= 0) { this.groundT = 0.75; this.level.groundTex.needsUpdate = true; } // blood decals paint into map.bot
+    // blood decals paint into map.bot: re-upload soon after a new one, and now and then for anything else
+    if (this.groundT <= 0 || (map.botDirty && this.groundT < 1.85)) { this.groundT = 2; map.botDirty = false; this.level.groundTex.needsUpdate = true; }
   }
 
   end() {
