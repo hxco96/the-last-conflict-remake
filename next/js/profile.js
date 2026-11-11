@@ -67,13 +67,15 @@ export class Profile {
     this.inventory = s.inventory || ['Beretta92'];     // weapons carried between runs
     this.storage = s.storage || [...this.owned].filter((n) => n !== 'Beretta92').slice(0, 4); // lobby locker
     this.prefs = s.prefs || {};                        // saved class / survivor
-    this.upgrades = s.upgrades || {};       // itemId -> { kind: level }
+    this.upgrades = s.upgrades || {};
+    this.mods = s.mods || {};       // gun name -> { muzzle, sight, mag, stock } fitted mod ids
+    this.modBag = s.modBag || {};   // mod id -> count       // itemId -> { kind: level }
     this.inv = { weaponSlots: 0, ammoSlots: 0, throwCap: 0, storageSlots: 0, ...(s.inv || {}) }; // purchased levels
     this.stats = s.stats || { matches: 0, kills: 0, best: 0 };
   }
   save() {
     try {
-      localStorage.setItem(STORE, JSON.stringify({ coins: this.coins, owned: [...this.owned], inventory: this.inventory, storage: this.storage, prefs: this.prefs, upgrades: this.upgrades, inv: this.inv, stats: this.stats }));
+      localStorage.setItem(STORE, JSON.stringify({ coins: this.coins, owned: [...this.owned], inventory: this.inventory, storage: this.storage, prefs: this.prefs, upgrades: this.upgrades, inv: this.inv, stats: this.stats, mods: this.mods || {}, modBag: this.modBag || {} }));
     } catch { /* no storage */ }
   }
   level(kind) { const u = SLOT_UPGRADES[kind]; return u.base + this.inv[kind]; }

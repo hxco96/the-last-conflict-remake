@@ -14,6 +14,7 @@ import { Director } from './survival.js';
 import { ZOMBIE_COUNT } from './profile.js';
 import { perf } from './perf.js';
 import { View3D, webglOk } from './view3d.js';
+import { rollMod, modName, modColor } from './mods.js';
 
 // Group unlock delays from spawn_levels_*.rktd are in seconds; scaled so a solo run sees them sooner.
 const TIME_SCALE = 1 / 3;
@@ -296,6 +297,9 @@ export class Game {
     return null;
   }
 
+  // a gun mod lying on the ground (mods.js)
+  modPickup(id, x, y) { return { name: modName(id), item: null, kind: 'mod', modId: id, x, y, amount: null, tile: null, bob: Math.random() * 6 }; }
+
   makePickup(name, x, y, amount, tile = null, force = false) {
     let it = this.data.item(name);
     if (!force && !this.opts.lobby && it && (it.kind === 'gun' || it.kind === 'melee') && tierOf(it) > lootCap(this.time, false)) {
@@ -355,6 +359,7 @@ export class Game {
   newSlot(it) {
     const ups = this.profile ? this.profile.ups(it['sprite-id']) : {};
     const s = new WeaponSlot(it, this.data, undefined, ups);
+    if (this.profile && it.kind === 'gun') { const P = this.profile; P.mods = P.mods || {}; s.mods = P.mods[it.name] = P.mods[it.name] || {}; }
     s.mag = s.stat('max-mag') ?? it['max-mag'];
     return s;
   }
@@ -625,6 +630,7 @@ export class Game {
     }
     const d = Math.random() < Math.min(1, this.dir.dropChance() * (this.hasPerk('Forager') ? 1.5 : 1)) ? this.data.rollDrop(1) : null;
     if (d) this.pickups.push(this.makePickup(d.name, m.x, m.y - 6, null));
+    if (m.boss || Math.random() < 0.03) this.pickups.push(this.modPickup(rollMod(m.boss), m.x + 8, m.y - 4));
     if (m.boss) for (let i = 0; i < 3; i++) { const g = this.rollLoot(2, true); if (g) this.pickups.push(this.makePickup(g.name, m.x + i * 12 - 12, m.y, null, null, true)); }
   }
 
@@ -908,6 +914,17 @@ export class Game {
 
   collect(p, manual) {
     const pl = this.player;
+    if (p.kind === 'mod') {
+      if (!this.profile) return false;
+      const bag = this.profile.modBag = this.profile.modBag || {};
+      bag[p.modId] = (bag[p.modId] || 0) + 1;
+      this.profile.save();
+      this.msg(`Gun mod: ${p.name} — press C to fit it`, modColor(p.modId));
+      play.pickup();
+      p.dead = true;
+      if (p.sid && this.coop) this.coop.taken(this, p);
+      return true;
+    }
     if (p.kind === 'ammo') {
       // auto: only tops up a slot already holding this type; manual (Use) claims a free slot
       // or replaces a slot whose ammo none of your weapons use

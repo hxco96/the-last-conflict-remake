@@ -11,6 +11,8 @@ export function slotFor(item) {
   return 2;
 }
 
+import { modMul, modAdd } from './mods.js';
+
 export class WeaponSlot {
   constructor(item, data, mag, ups) {
     this.item = item;
@@ -26,13 +28,21 @@ export class WeaponSlot {
   get ammoKind() { return this.item['ammo-kind']; }
   upgrades() { return this.data.upgrades.get(this.item['sprite-id']) || []; }
   stat(k) {
+    let v = this.item[k];
     const lvl = this.ups[k];
     if (lvl) {
       const u = this.upgrades().find((x) => x.kind === k);
-      if (u && u.levels[lvl - 1]) return u.levels[lvl - 1][0];
+      if (u && u.levels[lvl - 1]) v = u.levels[lvl - 1][0];
     }
-    return this.item[k];
+    // fitted gun mods (mods.js)
+    if (this.mods && typeof v === 'number') {
+      if (k === 'max-mag') v = Math.max(1, Math.round(v * modMul(this.mods, k)));
+      else if (['damage', 'fire-rate', 'reload-time', 'spread-angle'].includes(k)) v *= modMul(this.mods, k);
+    }
+    return v;
   }
+  modK(k) { return modMul(this.mods, k); }
+  modAdd(k) { return modAdd(this.mods, k); }
 }
 
 // ---------- Effects ----------
@@ -233,12 +243,12 @@ export function fireWeapon(g, slot, ax, ay) {
   if (g.hasPerk('AmmoSaver') && Math.random() < 0.3) slot.mag++;
   const pellets = Math.max(1, slot.stat('spread') || 1);
   const spreadRad = ((slot.stat('spread-angle') || 0) * Math.PI) / 180;
-  const wobble = (pl.moving ? 0.07 : 0.025) * (pl.running ? 2 : 1);
+  const wobble = (pl.moving ? 0.07 : 0.025) * (pl.running ? 2 : 1) * slot.modK('wobble');
   const explosive = EXPLOSIVE_CLASSES.has(it.class);
   const flame = it.class === 'thrower' ? (/acid/i.test(it.name) ? 'thrower-acid' : /freeze/i.test(it.name) ? 'thrower-freeze' : 'thrower-flames') : null;
   // recoil bloom: sustained fire widens the cone; it recovers while you pause
   const now = g.time || 0;
-  slot.bloom = Math.max(0, (slot.bloom || 0) - (now - (slot.lastShot || 0)) * 0.35) + (BLOOM[it.class] ?? 0.012);
+  slot.bloom = Math.max(0, (slot.bloom || 0) - (now - (slot.lastShot || 0)) * 0.35) + (BLOOM[it.class] ?? 0.012) * slot.modK('bloom');
   slot.lastShot = now;
   const bloom = Math.min(0.14, slot.bloom);
   // pellet weapons split 1.6x the listed damage across pellets (a full point-blank hit)
@@ -249,7 +259,7 @@ export function fireWeapon(g, slot, ax, ay) {
     const speed = flame ? 260 : it.speed || 480;
     if (!explosive && !flame) {
       // hitscan: no visible projectile, just impacts where the round lands
-      hitscan(g, { x: ox, y: oy, a, range: it.range || 320, dmg, longshot: perk.longshot, pierce: (it.pierce ?? 0) + perk.pierce,
+      hitscan(g, { x: ox, y: oy, a, range: (it.range || 320) * slot.modK('range'), dmg, longshot: perk.longshot + slot.modAdd('longshot'), pierce: (it.pierce ?? 0) + perk.pierce,
         crit: perk.crit + (it['crit-chance'] || 0), critMul: it['crit-damage'] || 2, stun: perk.stun || it['stun-chance'] || 0, pellet: pellets > 1 });
       continue;
     }
@@ -270,6 +280,6 @@ export function fireWeapon(g, slot, ax, ay) {
     play.shot(it, ox, oy);
     g.ejectShell(it);
   } else play.shot(it, ox, oy);
-  g.alertMobs(ox, oy, it.attraction || 160);
+  g.alertMobs(ox, oy, (it.attraction || 160) * slot.modK('noise'));
   return true;
 }

@@ -9,6 +9,7 @@
 import { T } from './map.js';
 import { hitscan } from './combat.js';
 import { play } from './sfx.js';
+import { rollMod } from './mods.js';
 
 export const RES = {
   food: { name: 'Food', short: 'FOOD', col: '#e0a060' },
@@ -130,6 +131,7 @@ export class Shelter {
 
   // ---------- loot and the rucksack ----------
   rollPile(p) {
+    if (Math.random() < 0.07) { p.mod = rollMod(); return p; }
     if (Math.random() < 0.45) return p; // scrap or boards, as before
     p.kind = pickWeighted(LOOT_WEIGHTS);
     p.n = 2 + ((Math.random() * 3) | 0);

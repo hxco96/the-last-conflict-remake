@@ -13,6 +13,7 @@ import { NPC, randomLook } from './npc.js';
 import { play, sample, music, siren } from './sfx.js';
 import { Shelter, freshShelter } from './shelter.js';
 import { TALENTS, makeBio, hasTalent, talentName } from './survivors.js';
+import { modName, modColor } from './mods.js';
 
 const STORE = 'tlcr-siege-v1';
 export const DAY_LEN = 150, FIRST_DAY_BONUS = 60, DUSK_LEN = 20;
@@ -399,6 +400,7 @@ export class Siege {
     const g = this.g, pl = g.player;
     for (const p of this.piles) {
       if (Math.hypot(p.x - pl.x, p.y - (pl.y - 6)) > 15) continue;
+      if (p.mod) { const P = g.profile; if (P) { P.modBag[p.mod] = (P.modBag[p.mod] || 0) + 1; P.save(); } g.msg(`Gun mod: ${modName(p.mod)} — press C to fit it`, modColor(p.mod)); play.pickup(); p.dead = true; continue; }
       if (p.kind) { if (this.shelter.pickPack(p)) p.dead = true; continue; }
       p.dead = true;
       if (p.boards) { g.items.set('Boards', Math.min(20, (g.items.get('Boards') || 0) + 1)); g.msg('+1 boards', '#d7b98a'); }
@@ -789,6 +791,7 @@ export class Siege {
     // scrap piles
     for (const p of this.piles) {
       const b = Math.sin(t * 3 + p.x) * 1.2;
+      if (p.mod) { ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(p.x - 6, p.y - 1, 12, 3); ctx.fillStyle = '#2a2f38'; ctx.fillRect(p.x - 6, p.y - 8 + b, 12, 7); ctx.fillStyle = modColor(p.mod); ctx.fillRect(p.x - 4, p.y - 6 + b, 8, 2); ctx.fillRect(p.x - 1, p.y - 10 + b, 2, 3); continue; }
       if (p.kind) { this.shelter.drawPile(ctx, p, b); continue; }
       ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(p.x - 5, p.y - 1, 10, 3);
       if (p.boards) { ctx.fillStyle = '#8a6434'; ctx.fillRect(p.x - 6, p.y - 6 + b, 12, 3); ctx.fillRect(p.x - 5, p.y - 9 + b, 10, 3); }
