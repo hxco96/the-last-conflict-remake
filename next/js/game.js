@@ -1214,6 +1214,7 @@ export class Game {
     let speed = pl.running ? RUN : WALK;
     if (s && !this.hasPerk('Agile')) speed *= 1 - Math.min(0.25, (s.item.weight || 0) * 0.3);
     if (this.hasPerk('Sprinter')) speed *= 1.12;
+    if (this.ext && this.ext.siege && this.ext.siege.ready) speed *= this.ext.siege.shelter.speedMul(); // rucksack weight
     if (this.hasPerk('Adrenaline') && pl.hp < pl.maxHp * 0.4) speed *= 1.2;
     pl.stillT = pl.moving ? 0 : (pl.stillT || 0) + dt;
     if (this.webbed > 0) { this.webbed -= dt; speed *= 0.45; }

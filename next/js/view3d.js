@@ -370,7 +370,7 @@ export class View3D {
 
   // ---------- frame ----------
   begin(map, dt) {
-    if (map !== this.map) this.setMap(map);
+    if (map !== this.map || (map.ver || 0) !== this.mapVer) { this.mapVer = map.ver || 0; this.setMap(map); }
     this.frame++;
     this.sigT -= dt;
     if (this.sigT <= 0) {

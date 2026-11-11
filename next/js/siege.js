@@ -11,6 +11,7 @@ import { perf } from './perf.js';
 import { cellOf } from './actors.js';
 import { NPC, randomLook } from './npc.js';
 import { play, sample, music, siren } from './sfx.js';
+import { Shelter, freshShelter } from './shelter.js';
 
 const STORE = 'tlcr-siege-v1';
 export const DAY_LEN = 150, FIRST_DAY_BONUS = 60, DUSK_LEN = 20;
@@ -28,9 +29,9 @@ const GUNS = [['Beretta92', 'Police-Handgun', 'UMP45'], ['MP5', 'SA80', 'Spas-12
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 
 // ---------- campaign save ----------
-const fresh = () => ({ night: 1, scrap: 60, boards: 6, up: { walls: 0, barracks: 0, armory: 0, medic: 0, lights: 0 }, vets: [], best: 1, kills: 0, runs: 0, deaths: 0 });
+const fresh = () => ({ ...freshShelter(), night: 1, scrap: 60, boards: 6, up: { walls: 0, barracks: 0, armory: 0, medic: 0, lights: 0 }, vets: [], best: 1, kills: 0, runs: 0, deaths: 0 });
 function readAll() { try { return JSON.parse(localStorage.getItem(STORE) || '{}'); } catch { return {}; } }
-export function loadCampaign(map) { const c = readAll()[map]; return c ? { ...fresh(), ...c, up: { ...fresh().up, ...c.up } } : fresh(); }
+export function loadCampaign(map) { const c = readAll()[map]; return c ? { ...fresh(), ...c, up: { ...fresh().up, ...c.up }, res: { ...fresh().res, ...c.res } } : fresh(); }
 export function saveCampaign(map, c) { try { const all = readAll(); all[map] = c; localStorage.setItem(STORE, JSON.stringify(all)); } catch { /* storage unavailable */ } }
 export function resetCampaign(map) { try { const all = readAll(); delete all[map]; localStorage.setItem(STORE, JSON.stringify(all)); } catch { /* storage unavailable */ } }
 // Survival runs pay Siege scrap: every saved campaign gets it, so a long run elsewhere strengthens your base.
@@ -140,6 +141,8 @@ export class Siege {
     this.shop = null;
     this.stragT = 12;
     this.regenAcc = 0;
+    this.bunks = 0;
+    this.shelter = new Shelter(this);
   }
 
   get mapName() { return this.g.opts.map.name; }
@@ -156,6 +159,7 @@ export class Siege {
     g.dir.on = false; // the siege runs its own clock; keep Director for gore, streaks, elites and drops
     this.syncDirector();
     this.bolster();
+    this.shelter.init();
     this.applyWalls(true);
     // put the player at the camp
     const pl = g.player;
@@ -197,7 +201,14 @@ export class Siege {
 
   save() { saveCampaign(this.mapName, this.c); }
   inBase(x, y) { const [cx, cy] = cellOf({ x, y }); return this.zones.inBase.has(cy * this.zones.W + cx); }
-  get slots() { return 2 + this.c.up.barracks; }
+  get slots() { return 2 + this.c.up.barracks + this.bunks; }
+
+  dismiss(d, text) {
+    d.v.here = false;
+    this.defenders = this.defenders.filter((x) => x !== d);
+    this.g.npcs = this.g.npcs.filter((x) => x !== d.n);
+    this.g.msg(text, '#ffb36b');
+  }
 
   // ---------- day ----------
   startDay(first = false) {
@@ -210,7 +221,7 @@ export class Siege {
     this.scatterPiles();
     this.arrivals();
     this.save();
-    this.say(`DAY ${this.c.night}`, '#ffd36b', 'Scavenge scrap, visit the workbench, board the windows.');
+    this.say(`DAY ${this.c.night}`, '#ffd36b', 'Loot supplies, carry them home to the locker, build up the shelter.');
   }
 
   scatterPiles() {
@@ -223,7 +234,7 @@ export class Siege {
       if (i < N / 3 && bc.length) { const [cx, cy] = pick(bc); p = { x: cx * T + 16, y: cy * T + 20 }; }
       else p = map.randomWalkable();
       if (!p) continue;
-      this.piles.push({ x: p.x, y: p.y, v: 3 + ((Math.random() * 6) | 0) + Math.floor(this.c.night / 2), boards: Math.random() < 0.2 });
+      this.piles.push(this.shelter.rollPile({ x: p.x, y: p.y, v: 3 + ((Math.random() * 6) | 0) + Math.floor(this.c.night / 2), boards: Math.random() < 0.2 }));
     }
   }
 
@@ -233,7 +244,8 @@ export class Siege {
   arrivals() {
     const g = this.g, c = this.c, up = c.up;
     if (g.z !== this.baseZ) return;
-    const back = Math.min(0.92, 0.55 + 0.04 * c.night + 0.05 * up.barracks);
+    const mk = 0.6 + 0.4 * (c.morale / 100); // a hungry, grieving camp attracts and keeps fewer people
+    const back = Math.min(0.92, 0.55 + 0.04 * c.night + 0.05 * up.barracks) * mk;
     const here = () => this.defenders.length;
     for (const v of c.vets) {
       if (v.fallen || v.here || here() >= this.slots) continue;
@@ -241,7 +253,7 @@ export class Siege {
     }
     // strangers asking for shelter
     let tries = Math.random() < 0.6 ? 2 : 1;
-    while (tries-- > 0 && here() < this.slots && Math.random() < 0.8) {
+    while (tries-- > 0 && here() < this.slots && Math.random() < 0.8 * mk) {
       const kind = Math.random() < 0.28 ? 'survivor' : 'soldier';
       const look = randomLook(kind, g.atlas.core);
       const names = look.female ? g.assets.barks.names_f : g.assets.barks.names_m;
@@ -300,6 +312,7 @@ export class Siege {
         this.defenders = this.defenders.filter((x) => x !== d);
         g.npcs = g.npcs.filter((x) => x !== n);
         g.msg(`${d.v.name} has fallen. They will not return.`, '#ff8b8b');
+        this.shelter.onFallen();
       } else if (n.alive && med && this.inBase(n.x, n.y)) n.hp = Math.min(n.maxHp, n.hp + 1.2 * med * dt);
     }
   }
@@ -315,6 +328,8 @@ export class Siege {
     if (!pl.alive) { if (!this.deadHandled) this.onDeath(); return; }
     this.updateDefenders(dt);
     this.collectPiles();
+    this.shelter.update(dt);
+    if (this.c.ruck.length && this.phase !== 'night' && Math.hypot(pl.x - this.zones.anchor.x, pl.y - this.zones.anchor.y) < 34) this.shelter.deposit();
     // field hospital
     const med = this.c.up.medic;
     if (med && pl.hp < pl.maxHp && this.inBase(pl.x, pl.y)) { this.regenAcc += 1.5 * med * dt; if (this.regenAcc >= 1) { pl.hp = Math.min(pl.maxHp, pl.hp + 1); this.regenAcc -= 1; } }
@@ -339,6 +354,7 @@ export class Siege {
     const g = this.g, pl = g.player;
     for (const p of this.piles) {
       if (Math.hypot(p.x - pl.x, p.y - (pl.y - 6)) > 15) continue;
+      if (p.kind) { if (this.shelter.pickPack(p)) p.dead = true; continue; }
       p.dead = true;
       if (p.boards) { g.items.set('Boards', Math.min(20, (g.items.get('Boards') || 0) + 1)); g.msg('+1 boards', '#d7b98a'); }
       else { this.c.scrap += p.v; g.msg(`+${p.v} scrap`, '#c8a45a'); }
@@ -365,6 +381,7 @@ export class Siege {
     this.t = DUSK_LEN;
     this.piles = [];
     this.plan = this.planNight();
+    this.shelter.dusk();
     this.applyWalls(true);
     this.save();
     siren(DUSK_LEN);
@@ -544,12 +561,13 @@ export class Siege {
     this.applyWalls(true);
     g.dir.supplyDrop();
     g.items.set('Boards', Math.min(20, (g.items.get('Boards') || 0) + 4 + 2 * c.up.armory));
+    const report = this.shelter.dawnReport();
     c.night++;
     c.best = Math.max(c.best, c.night);
     this.syncDirector();
     c.boards = g.items.get('Boards') || 0;
     this.save();
-    this.say(`NIGHT ${c.night - 1} SURVIVED`, '#7dff8a', `+${scraps} scrap · supplies dropped · night ${c.night} will be worse`);
+    this.say(`NIGHT ${c.night - 1} SURVIVED`, '#7dff8a', `+${scraps} scrap · ${report}`);
     g.msg(`Dawn. +${scraps} scrap, +${10 * c.night} coins. The horde will return stronger.`, '#7dff8a');
     play.radio();
   }
@@ -585,7 +603,7 @@ export class Siege {
     const pl = this.g.player, a = this.zones.anchor;
     if (Math.hypot(pl.x - a.x, pl.y - a.y) > 40) return null;
     if (this.phase === 'night') return { type: 'ext', label: 'Workbench (locked until dawn)', run: () => this.g.msg('The crew has locked the workbench. Hold the line until dawn.', '#ffb36b') };
-    return { type: 'ext', label: 'Workbench — upgrades & supplies', run: () => this.openShop() };
+    return { type: 'ext', label: 'Workbench & locker — build, upgrade, stockpile', run: () => this.openShop() };
   }
 
   buy(kind, key) {
@@ -653,6 +671,7 @@ export class Siege {
       row.append(l >= U.max ? mk('div', 'color:#7dff8a;font-size:18px', 'MAX') : btn(`${U.cost[l]} ⚙`, () => this.buy('up', key), c.scrap >= U.cost[l]));
       panel.append(row);
     }
+    panel.append(this.shelter.shopPanel(mk, btn));
     panel.append(mk('div', 'font-size:22px;margin:12px 0 4px;color:#9cd4ff', 'SUPPLIES'));
     const sup = mk('div', 'display:flex;flex-wrap:wrap;gap:8px');
     sup.append(btn('Boards ×1 · 4 ⚙', () => this.buy('s', 'boards'), c.scrap >= 4), btn('Ammo crate · 30 ⚙', () => this.buy('s', 'ammo'), c.scrap >= 30), btn('Herbs · 25 ⚙', () => this.buy('s', 'medkit'), c.scrap >= 25));
@@ -688,6 +707,7 @@ export class Siege {
     // scrap piles
     for (const p of this.piles) {
       const b = Math.sin(t * 3 + p.x) * 1.2;
+      if (p.kind) { this.shelter.drawPile(ctx, p, b); continue; }
       ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(p.x - 5, p.y - 1, 10, 3);
       if (p.boards) { ctx.fillStyle = '#8a6434'; ctx.fillRect(p.x - 6, p.y - 6 + b, 12, 3); ctx.fillRect(p.x - 5, p.y - 9 + b, 10, 3); }
       else { ctx.fillStyle = '#8c8f94'; ctx.fillRect(p.x - 5, p.y - 5 + b, 6, 4); ctx.fillStyle = '#c8a45a'; ctx.fillRect(p.x - 1, p.y - 8 + b, 6, 5); ctx.fillStyle = '#b5532a'; ctx.fillRect(p.x - 3, p.y - 3 + b, 4, 3); }
@@ -699,6 +719,7 @@ export class Siege {
     if (!this.ready) return;
     const a = this.zones.anchor, up = this.c.up.lights;
     hole(a.x, a.y - 8, 120, 0.7);
+    this.shelter.lights(hole);
     if (this.phase === 'day' || !up) return;
     for (const o of this.zones.openings) hole(o.cx * T + 16, o.cy * T + 16, 90 + 30 * up, 0.55);
   }
@@ -708,6 +729,12 @@ export class Siege {
     const g = this.g;
     if (this.phase === 'night') { ctx.fillStyle = `rgba(90,0,0,${0.08 + 0.04 * Math.sin(g.time * 2)})`; ctx.fillRect(0, 0, W, H); }
     ctx.textAlign = 'center';
+    // stockpile strip under the top HUD
+    const line = this.shelter.stockLine();
+    ctx.font = `${Math.round(13 * u)}px Bebas, Impact, sans-serif`;
+    const lw = ctx.measureText(line).width + 16 * u;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(W / 2 - lw / 2, 68 * u, lw, 18 * u);
+    ctx.fillStyle = '#e8e8e8'; ctx.fillText(line, W / 2, 82 * u);
     const b = this.banner;
     if (b) {
       const y = Math.max(H * 0.3, 150 * u), a = Math.min(1, b.t * 1.5);
