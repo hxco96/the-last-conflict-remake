@@ -7,6 +7,7 @@ import { Profile, SLOT_UPGRADES, DIFFICULTY, ZOMBIE_COUNT } from './profile.js';
 import { tierOf, statLine, TIER_COLORS, TIER_NAMES } from './tiers.js';
 import { MODES, THEMES } from './modes.js';
 import { openModBench } from './mods.js';
+import { openMarket } from './market.js';
 import { campaignLine } from './siege.js';
 import { LOOKS } from './actors.js';
 import { unlockAudio, sfx, initAudio, music, setMuted, applyVolumes, play, suspendAudio } from './sfx.js';
@@ -123,8 +124,13 @@ async function cacheEverything() {
 window.addEventListener('keydown', unlockAudio);
 window.addEventListener('keydown', (e) => {
   if ((e.key !== 'c' && e.key !== 'C') || e.repeat || screen || !session || !session.active || /INPUT|TEXTAREA/.test((e.target && e.target.tagName) || '')) return;
-  if (document.querySelector('[data-modbench]')) return;
+  if (document.querySelector('[data-modbench]') || document.querySelector('[data-market]')) return;
   e.preventDefault(); openModBench(session.active);
+});
+window.addEventListener('keydown', (e) => {
+  if ((e.key !== 'k' && e.key !== 'K') || e.repeat || screen || !session || !session.active || /INPUT|TEXTAREA/.test((e.target && e.target.tagName) || '')) return;
+  if (document.querySelector('[data-modbench]') || document.querySelector('[data-market]')) return;
+  e.preventDefault(); openMarket(session.active);
 });
 // UI feedback sounds for every menu button
 overlay.addEventListener('click', (e) => { if (e.target.closest('button')) play.ui('menuClick'); });
@@ -662,6 +668,7 @@ function showPause() {
       el('button', { class: 'pick', onclick: () => showSettings(showPause) }, el('b', {}, '⚙ Settings')),
       canFs() && !standalone() ? el('button', { class: 'pick', onclick: () => { if (fsEl()) exitFullscreen(); else goFullscreen(true); closePanel(); } }, el('b', {}, fsEl() ? '⛶ Exit fullscreen' : '⛶ Fullscreen')) : null,
       session && session.active ? el('button', { class: 'pick', onclick: () => { closePanel(); openModBench(session.active); } }, el('b', {}, '🔧 Gun mods (C)')) : null,
+      session && session.active ? el('button', { class: 'pick', onclick: () => { closePanel(); openMarket(session.active); } }, el('b', {}, '⚖ Market (K)')) : null,
       inMatch ? el('button', { class: 'pick', onclick: () => { closePanel(); session.retreat(); } }, el('b', {}, '🏳 Retreat to base')) : null,
       el('button', { class: 'pick', onclick: () => (session ? showChange() : (choice.changing = true, leaveSession())) }, el('b', {}, 'Change class / survivor')),
       el('button', { class: 'pick', onclick: () => { choice.changing = false; leaveSession(); } }, el('b', {}, session && session.coop ? 'Leave co-op' : 'Quit to title'))),
