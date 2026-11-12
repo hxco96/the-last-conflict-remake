@@ -95,6 +95,7 @@ export class Shelter {
     map.solid[i] = 1;
     map.ver = (map.ver || 0) + 1;
     map.botDirty = true;
+    { const R = map.botRect || (map.botRect = { x0: x, y0: y, x1: x, y1: y }); R.x0 = Math.min(R.x0, x); R.y0 = Math.min(R.y0, y); R.x1 = Math.max(R.x1, x + r.ts.tw); R.y1 = Math.max(R.y1, y + r.ts.th); }
     f.x = cx * T + 16; f.y = cy * T + 16;
     g.flowT = 0;
     return true;

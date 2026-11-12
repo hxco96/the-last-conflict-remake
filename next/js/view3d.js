@@ -10,6 +10,7 @@ const WALL_H = 1.25;      // short walls: nothing hides the player
 const PITCH = (56 * Math.PI) / 180;
 const FOV = 35;
 const PAD = 8;            // pixels under an actor's feet inside its billboard canvas
+const CH = 512;           // floor chunk size in pixels
 const K = 1 / Math.cos(PITCH); // upright art is stretched by this so it reads 1:1 from the tilted camera
 
 const PROP_H = { Car: 0.6, Obstruction: 0.5 };
@@ -119,6 +120,7 @@ export class View3D {
     this.sigT = 0;
     this.groundT = 0;
     this.sprites = new Map(); // key object -> billboard
+    this.pool = new Map();    // billboard size -> idle billboards
     this.geos = new Map();    // billboard size -> shared geometry
     this.pageTex = new Map(); // tile page image -> texture
     this.frame = 0;
@@ -155,15 +157,27 @@ export class View3D {
   setMap(map) {
     if (this.level) {
       for (const m of this.level.meshes) { this.scene.remove(m); m.geometry.dispose(); }
-      this.level.groundTex.dispose(); this.level.wallTex.dispose();
+      for (const c of this.level.chunks) c.t.dispose();
+      this.level.wallTex.dispose();
     }
     for (const b of this.sprites.values()) this.dropSprite(b);
     this.sprites.clear();
     this.map = map;
     const { w, h, pw, ph } = map;
-    const groundTex = tex(map.bot, true);
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshLambertMaterial({ map: groundTex }));
-    ground.rotation.x = -Math.PI / 2; ground.position.set(w / 2, 0, h / 2);
+    // The floor is cut into chunks, each with its own small canvas and texture. Blood decals land in
+    // map.bot many times a second in a fight; re-uploading one 2600x2000 texture for each was the main
+    // source of stutter, so only the chunks a decal touched are copied and uploaded again.
+    const chunks = [], ground = [], groundMat = [];
+    for (let py = 0; py < ph; py += CH) for (let px = 0; px < pw; px += CH) {
+      const cw = Math.min(CH, pw - px), chh = Math.min(CH, ph - py);
+      const c = document.createElement('canvas'); c.width = cw; c.height = chh;
+      c.getContext('2d').drawImage(map.bot, px, py, cw, chh, 0, 0, cw, chh);
+      const t = tex(c); t.minFilter = THREE.LinearFilter;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(cw / T, chh / T), new THREE.MeshLambertMaterial({ map: t }));
+      m.rotation.x = -Math.PI / 2; m.position.set((px + cw / 2) / T, 0, (py + chh / 2) / T);
+      chunks.push({ x: px, y: py, w: cw, h: chh, c, t, dirty: false });
+      ground.push(m);
+    }
     // one canvas for every raised face: floor + doors/barricades as they are now + the over-actor layer
     const wc = this.wallCanvas = document.createElement('canvas'); wc.width = pw; wc.height = ph;
     const f = wc.getContext('2d');
@@ -171,10 +185,11 @@ export class View3D {
     for (const d of map.doors) map.drawDynamic(f, d);
     for (const c of map.cades) map.drawDynamic(f, { ...c, hit: 0 });
     f.drawImage(map.top, 0, 0);
-    const wallTex = tex(wc, true);
+    const wallTex = tex(wc); wallTex.minFilter = THREE.LinearFilter; // no mipmaps: they cost a full regeneration on every door/barricade change
     this.wallMat = new THREE.MeshLambertMaterial({ map: wallTex });
-    this.level = { groundTex, wallTex, meshes: [ground], dyn: [] };
-    this.scene.add(ground);
+    this.level = { chunks, wallTex, meshes: ground.slice(), dyn: [] };
+    for (const m of ground) this.scene.add(m);
+    map.botDirty = false; map.botRect = null;
     this.buildStatic();
     this.buildDynamic(false);
   }
@@ -334,6 +349,10 @@ export class View3D {
     let b = this.sprites.get(key);
     if (b && b.size !== size) { this.dropSprite(b); b = null; }
     if (!b) {
+      const pool = this.pool.get(size);
+      if (pool && pool.length) { b = pool.pop(); b.painted = false; this.sprites.set(key, b); return b; }
+    }
+    if (!b) {
       const c = document.createElement('canvas'); c.width = c.height = size;
       const ctx = c.getContext('2d'); ctx.imageSmoothingEnabled = false;
       const t = tex(c);
@@ -346,13 +365,19 @@ export class View3D {
       const s = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: t, alphaTest: 0.4 }));
       const shadow = new THREE.Mesh(this.blobGeo, this.blobMat);
       this.scene.add(s, shadow);
-      b = { s, shadow, c, ctx, t, size, seen: 0 };
+      b = { s, shadow, c, ctx, t, size, seen: 0, fresh: undefined };
       this.sprites.set(key, b);
     }
     return b;
   }
 
+  // Canvases and textures are kept for reuse: creating and uploading new ones as zeds walk in and
+  // out of view caused hitches and garbage.
   dropSprite(b) {
+    let pool = this.pool.get(b.size);
+    if (!pool) this.pool.set(b.size, pool = []);
+    b.s.visible = false; b.shadow.visible = false;
+    if (pool.length < 48) { pool.push(b); return; }
     this.scene.remove(b.s, b.shadow);
     b.s.material.dispose(); b.t.dispose();
   }
@@ -368,7 +393,8 @@ export class View3D {
     b.shadow.position.set(e.x / T, 0.012, e.y / T);
     // `every`: seconds between repaints; the picture is drawn relative to the actor, so it can be reused as it moves
     if (e.every && b.painted && this.now - b.paintT < e.every) return;
-    b.painted = true; b.paintT = this.now;
+    // spread first repaints out so a crowd that appears together does not repaint on the same frame
+    b.painted = true; b.paintT = this.now - (b.fresh === undefined && e.every ? Math.random() * e.every : 0); b.fresh = 0;
     const { ctx, c } = b;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
@@ -384,12 +410,23 @@ export class View3D {
     this.now = (this.now || 0) + dt;
     this.sigT -= dt;
     if (this.sigT <= 0) {
-      this.sigT = 0.2;
+      this.sigT = 0.4;
       if (dynSignature(map) !== this.sig) this.buildDynamic();
     }
     this.groundT -= dt;
-    // blood decals paint into map.bot: re-upload soon after a new one, and now and then for anything else
-    if (this.groundT <= 0 || (map.botDirty && this.groundT < 1.85)) { this.groundT = 2; map.botDirty = false; this.level.groundTex.needsUpdate = true; }
+    // blood decals and new facilities paint into map.bot: copy only the touched chunks, a few times a second
+    if (map.botDirty && this.groundT <= 0) {
+      this.groundT = 0.25;
+      const r = map.botRect || { x0: 0, y0: 0, x1: map.pw, y1: map.ph };
+      map.botDirty = false; map.botRect = null;
+      for (const c of this.level.chunks) {
+        if (r.x1 < c.x || r.x0 > c.x + c.w || r.y1 < c.y || r.y0 > c.y + c.h) continue;
+        const x0 = Math.max(c.x, Math.floor(r.x0)), y0 = Math.max(c.y, Math.floor(r.y0));
+        const x1 = Math.min(c.x + c.w, Math.ceil(r.x1)), y1 = Math.min(c.y + c.h, Math.ceil(r.y1));
+        c.c.getContext('2d').drawImage(map.bot, x0, y0, x1 - x0, y1 - y0, x0 - c.x, y0 - c.y, x1 - x0, y1 - y0);
+        c.t.needsUpdate = true;
+      }
+    }
   }
 
   end() {
