@@ -732,13 +732,20 @@ export class Game {
     }
   }
 
+  // The 3D floor re-uploads only the chunks inside this rectangle (see View3D.begin).
+  markBot(x, y, r) {
+    const m = this.map, R = m.botRect || (m.botRect = { x0: x, y0: y, x1: x, y1: y });
+    m.botDirty = true;
+    R.x0 = Math.min(R.x0, x - r); R.y0 = Math.min(R.y0, y - r); R.x1 = Math.max(R.x1, x + r); R.y1 = Math.max(R.y1, y + r);
+  }
+
   bloodDecal(x, y, scale) {
     if (this.hasPerk('Sanitation') || this.opts.lobby) return;
     const a = this.atlas.infected;
     const n = Math.floor(Math.random() * 7);
     const found = a.find('bpuddle-' + n, ['default', 'walk', 'death'], ['x', 's', 'e']);
     const ctx = this.map.bot.getContext('2d');
-    this.map.botDirty = true;
+    this.markBot(x, y, 40 * Math.max(1, scale * 2));
     if (found) {
       ctx.globalAlpha = 0.55;
       a.drawCentered(ctx, found.list[0].f, x, y, scale, Math.floor(Math.random() * 4) * Math.PI / 2);
@@ -789,6 +796,7 @@ export class Game {
     const ctx = this.map.bot.getContext('2d');
     ctx.fillStyle = 'rgba(20,16,12,0.35)';
     ctx.beginPath(); ctx.arc(x, y, radius * 0.4, 0, 7); ctx.fill();
+    this.markBot(x, y, radius * 0.4 + 2);
   }
 
   hurtPlayer(dmg, kind) {
@@ -1734,7 +1742,7 @@ export class Game {
       v3.billboard({ key: m, x: m.x, y: m.y, size, shadow: m.alive, every: m.flash > 0 ? 0 : !m.alive ? 0.25 : perf.lite ? 0.14 : 0.08, draw: (c) => { if (m.elite && m.alive) this.dir.drawElite(c, m); m.draw(c, this.atlas.infected, perf.lite); } });
     }
     if (!this.ghost) v3.billboard({ key: pl, x: pl.x, y: pl.y, draw: (c) => pl.draw(c, this.atlas.core, () => this.drawHeldWeapon(c)) });
-    for (const n of this.npcs) if (inView(n.x, n.y)) v3.billboard({ key: n, x: n.x, y: n.y, shadow: n.alive, draw: (c) => n.draw(c, this.atlas.core, n.weapon || n.carry ? () => this.drawWeapon(c, n, n.weapon || n.carry, n.recoilT > 0, n.flashT > 0) : null) });
+    for (const n of this.npcs) if (inView(n.x, n.y)) v3.billboard({ key: n, x: n.x, y: n.y, shadow: n.alive, every: n.alive ? 0.04 : 0.25, draw: (c) => n.draw(c, this.atlas.core, n.weapon || n.carry ? () => this.drawWeapon(c, n, n.weapon || n.carry, n.recoilT > 0, n.flashT > 0) : null) });
     // mode and co-op extras: entries carrying an x become billboards, the rest go on the flat layer
     const flat = [], extra = [];
     if (this.ext && this.ext.drawables) this.ext.drawables(extra, ctx);
